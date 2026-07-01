@@ -1,0 +1,38 @@
+# Node modules
+node_modules/
+
+# Build output
+dist/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Database / SQLite / Local databases
+*.db
+*.db-journal
+
+# Temporary/Uploaded files
+storage/temp/*
+!storage/temp/.gitkeep
+storage/documentos/*
+!storage/documentos/.gitkeep
+storage/clientes/*
+!storage/clientes/.gitkeep
+
+# IDE files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
