@@ -1,7 +1,19 @@
+import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
+import { Pool } from 'pg';
+import { PrismaPg } from '@prisma/adapter-pg';
 import bcrypt from 'bcrypt';
 
-const prisma = new PrismaClient();
+// Prisma 7 con driver adapters requiere pasar el adapter (igual que en
+// src/config/database.ts). new PrismaClient() a secas lanza
+// "PrismaClient needs to be constructed with a non-empty, valid PrismaClientOptions".
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  throw new Error('DATABASE_URL must be defined');
+}
+const pool = new Pool({ connectionString });
+const adapter = new PrismaPg(pool);
+const prisma = new PrismaClient({ adapter });
 
 async function main() {
   console.log('🌱 Iniciando la siembra de la base de datos...');
@@ -59,6 +71,25 @@ async function main() {
     },
   });
   console.log('✅ Usuario Administrador creado:', adminUser.email);
+
+  // 5. Clientes demo (para tener datos de prueba que bajen por el PULL de sync)
+  const clientesDemo = [
+    { nombre: 'Cliente Demo Uno', identificacion: '10000001', telefono: '+51 900 000 001', direccion: 'Av. Siempre Viva 100' },
+    { nombre: 'Cliente Demo Dos', identificacion: '10000002', telefono: '+51 900 000 002', direccion: 'Jr. Los Olivos 200' },
+    { nombre: 'Cliente Demo Tres', identificacion: '10000003', telefono: '+51 900 000 003', direccion: 'Calle Las Flores 300' },
+  ];
+  // Usar la organización REAL del admin (upsert puede devolver un admin
+  // preexistente cuya org no sea la recién creada). Así el PULL, que filtra
+  // clientes por la org del usuario autenticado, sí los devuelve.
+  const orgIdAdmin = adminUser.organizacionId ?? orgDefecto.id;
+  for (const c of clientesDemo) {
+    await prisma.cliente.upsert({
+      where: { identificacion: c.identificacion },
+      update: { nombre: c.nombre, telefono: c.telefono, direccion: c.direccion, organizacionId: orgIdAdmin },
+      create: { ...c, organizacionId: orgIdAdmin },
+    });
+  }
+  console.log(`✅ ${clientesDemo.length} clientes demo creados en la organización del admin (${orgIdAdmin}).`);
 
   console.log('🏁 Proceso de siembra finalizado con éxito.');
 }

@@ -1,4 +1,5 @@
 import { prisma } from '../../config/database.js';
+import { logger } from '../../config/logger.js';
 import type { PullResponse, WatermelonChanges } from './sincronizacion.types.js';
 
 export class SincronizacionService {
@@ -60,7 +61,18 @@ export class SincronizacionService {
     const serverTimestamp = Date.now();
     const lastPulledDate = lastPulledAt > 0 ? new Date(lastPulledAt) : null;
 
+    logger.info(
+      `📥 [SYNC PULL] Inicio | org=${organizacionId} | ${
+        lastPulledDate
+          ? `cambios desde ${lastPulledDate.toISOString()}`
+          : 'PRIMERA sincronización (envía TODO)'
+      }`
+    );
+
     const changes: WatermelonChanges = {};
+    let totalCreated = 0;
+    let totalUpdated = 0;
+    let totalDeleted = 0;
 
     // Tablas a sincronizar y sus respectivas consultas
     const tables = [
@@ -166,6 +178,27 @@ export class SincronizacionService {
       }
 
       changes[table.name] = { created, updated, deleted };
+
+      totalCreated += created.length;
+      totalUpdated += updated.length;
+      totalDeleted += deleted.length;
+
+      // Solo mostramos las tablas que tienen algo que enviar, para no llenar la consola
+      if (created.length || updated.length || deleted.length) {
+        logger.info(
+          `   → ${table.name}: ${created.length} nuevos, ${updated.length} modificados, ${deleted.length} borrados`
+        );
+      }
+    }
+
+    const totalCambios = totalCreated + totalUpdated + totalDeleted;
+    if (totalCambios === 0) {
+      logger.info('✅ [SYNC PULL] Sin cambios en el servidor. El cliente ya está al día.');
+    } else {
+      logger.info(
+        `✅ [SYNC PULL] Enviando al cliente ${totalCambios} cambios ` +
+          `(${totalCreated} nuevos, ${totalUpdated} modificados, ${totalDeleted} borrados) | timestamp=${serverTimestamp}`
+      );
     }
 
     return {
@@ -178,6 +211,34 @@ export class SincronizacionService {
    * Push: Aplica los cambios enviados por el cliente al servidor en una sola transaccion
    */
   async push(changes: WatermelonChanges, organizacionId: string, userId: string): Promise<void> {
+    // Resumen de lo que el cliente quiere subir, ANTES de aplicarlo
+    let entrantesCreated = 0;
+    let entrantesUpdated = 0;
+    let entrantesDeleted = 0;
+    for (const tabla in changes) {
+      const c = changes[tabla];
+      if (!c) continue;
+      entrantesCreated += c.created?.length ?? 0;
+      entrantesUpdated += c.updated?.length ?? 0;
+      entrantesDeleted += c.deleted?.length ?? 0;
+      if (c.created?.length || c.updated?.length || c.deleted?.length) {
+        logger.info(
+          `   ← ${tabla}: ${c.created?.length ?? 0} nuevos, ${c.updated?.length ?? 0} modificados, ${c.deleted?.length ?? 0} borrados`
+        );
+      }
+    }
+    const totalEntrantes = entrantesCreated + entrantesUpdated + entrantesDeleted;
+
+    logger.info(
+      `📤 [SYNC PUSH] Inicio | org=${organizacionId} | user=${userId} | ` +
+        `recibidos ${totalEntrantes} cambios (${entrantesCreated} nuevos, ${entrantesUpdated} modificados, ${entrantesDeleted} borrados)`
+    );
+
+    if (totalEntrantes === 0) {
+      logger.info('✅ [SYNC PUSH] El cliente no tenía cambios locales que subir.');
+      return;
+    }
+
     // Definimos el orden de las operaciones para evitar problemas de FK
     const tableOrder = [
       { name: 'organizaciones', model: prisma.organizacion, hasOrgId: false },
@@ -274,5 +335,9 @@ export class SincronizacionService {
         }
       }
     });
+
+    logger.info(
+      `✅ [SYNC PUSH] Transacción confirmada. ${totalEntrantes} cambios aplicados en el servidor.`
+    );
   }
 }
