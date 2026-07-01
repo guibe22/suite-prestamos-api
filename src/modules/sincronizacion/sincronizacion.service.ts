@@ -18,6 +18,17 @@ export class SincronizacionService {
         newObj[key] = Number(newObj[key]);
       }
     }
+    // WatermelonDB gestiona los timestamps con columnas raw en snake_case
+    // (created_at/updated_at). Renombramos las claves camelCase de Prisma para
+    // que coincidan con el schema del cliente.
+    if ('createdAt' in newObj) {
+      newObj.created_at = newObj.createdAt;
+      delete newObj.createdAt;
+    }
+    if ('updatedAt' in newObj) {
+      newObj.updated_at = newObj.updatedAt;
+      delete newObj.updatedAt;
+    }
     return newObj;
   }
 
@@ -31,6 +42,17 @@ export class SincronizacionService {
     // Limpiar campos temporales o internos de WatermelonDB si existiesen
     delete prismaData._status;
     delete prismaData._changed;
+
+    // El cliente envía los timestamps en snake_case (created_at/updated_at).
+    // Los pasamos a las claves camelCase que espera Prisma.
+    if ('created_at' in prismaData) {
+      prismaData.createdAt = prismaData.created_at;
+      delete prismaData.created_at;
+    }
+    if ('updated_at' in prismaData) {
+      prismaData.updatedAt = prismaData.updated_at;
+      delete prismaData.updated_at;
+    }
 
     // Campos que representan fechas en el esquema de la base de datos
     const dateFields = [
