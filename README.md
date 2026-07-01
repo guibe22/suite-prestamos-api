@@ -73,8 +73,8 @@ Inicia el servidor en modo desarrollo con recarga automática:
 npm run dev
 ```
 
-El servidor estará corriendo en: [http://localhost:3000](http://localhost:3000)
-La documentación Swagger interactiva estará en: [http://localhost:3000/api-docs](http://localhost:3000/api-docs)
+El servidor estará corriendo en: [http://localhost:3020](http://localhost:3020)
+La documentación Swagger interactiva estará en: [http://localhost:3020/api-docs](http://localhost:3020/api-docs)
 
 ---
 
