@@ -278,6 +278,8 @@ export class SincronizacionService {
     await prisma.$transaction(async (tx) => {
       // 1. Procesar Eliminaciones (de atrás hacia adelante en orden para evitar romper FKs en cascada)
       for (const table of [...tableOrder].reverse()) {
+        // La organización no se elimina desde el cliente
+        if (table.name === 'organizaciones') continue;
         const tableChanges = changes[table.name];
         if (tableChanges && tableChanges.deleted.length > 0) {
           const idsToDelete = tableChanges.deleted;
@@ -322,6 +324,28 @@ export class SincronizacionService {
 
         const modelName = getModelName(table.name);
         const modelTx = (tx as any)[modelName];
+
+        // La organización nunca se crea desde el cliente: ya existe en el servidor
+        // (se crea en el registro) y el registro local puede traer un id distinto.
+        // Aplicamos solo los campos editables sobre la organización del usuario,
+        // ignorando el id del cliente y campos sensibles como cuentaId (FK a Cuenta).
+        if (table.name === 'organizaciones') {
+          const camposEditables = ['nombre', 'identificacionTributaria', 'direccion', 'telefono'];
+          for (const item of [...tableChanges.created, ...tableChanges.updated]) {
+            const mappedData = this.mapClientDataToPrisma(item);
+            const data: any = {};
+            for (const campo of camposEditables) {
+              if (mappedData[campo] !== undefined) data[campo] = mappedData[campo];
+            }
+            if (Object.keys(data).length > 0) {
+              await modelTx.update({
+                where: { id: organizacionId },
+                data,
+              });
+            }
+          }
+          continue;
+        }
 
         // Creaciones
         if (tableChanges.created.length > 0) {

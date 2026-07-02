@@ -210,6 +210,10 @@ export class AuthService {
         ? {
             id: user.organizacion.id,
             nombre: user.organizacion.nombre,
+            identificacionTributaria: user.organizacion.identificacionTributaria,
+            direccion: user.organizacion.direccion,
+            telefono: user.organizacion.telefono,
+            configuracion: user.organizacion.configuracion,
           }
         : null,
     };
@@ -228,11 +232,29 @@ export class AuthService {
 
     // Guardar la configuración atómicamente e insertar el equipo
     return prisma.$transaction(async (tx) => {
-      // 1. Guardar la configuración en la organización
+      // 1. Fusionar la configuración nueva con la existente para que un guardado
+      // parcial (p. ej. solo finanzas) no borre las demás claves.
+      const orgActual = await tx.organizacion.findUnique({ where: { id: orgId } });
+      const configuracion = {
+        ...((orgActual?.configuracion as Record<string, unknown>) || {}),
+        ...(data.configuracion || {}),
+      };
+
+      // Reflejar los datos de empresa también en las columnas propias de la
+      // organización (las que usa la sincronización offline).
+      const columnas: Record<string, unknown> = {};
+      if (configuracion.nombreComercial) columnas.nombre = configuracion.nombreComercial;
+      if (configuracion.identificacionTributaria !== undefined) {
+        columnas.identificacionTributaria = configuracion.identificacionTributaria;
+      }
+      if (configuracion.direccion !== undefined) columnas.direccion = configuracion.direccion;
+      if (configuracion.telefono !== undefined) columnas.telefono = configuracion.telefono;
+
       const organizacionActualizada = await tx.organizacion.update({
         where: { id: orgId },
         data: {
-          configuracion: data.configuracion || {},
+          configuracion,
+          ...columnas,
         },
       });
 
