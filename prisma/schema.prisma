@@ -19,14 +19,15 @@ model Cuenta {
 }
 
 model Organizacion {
-  id        String   @id @default(uuid())
-  nombre    String
-  cuentaId  String
-  cuenta    Cuenta   @relation(fields: [cuentaId], references: [id])
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deletedAt DateTime?
-  deletedBy String?
+  id            String   @id @default(uuid())
+  nombre        String
+  cuentaId      String
+  cuenta        Cuenta   @relation(fields: [cuentaId], references: [id])
+  configuracion Json?    // Configuración del wizard (moneda, finanzas, rutas, etc.)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+  deletedBy     String?
 
   usuarios  Usuario[]
   clientes  Cliente[]

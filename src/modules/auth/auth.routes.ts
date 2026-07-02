@@ -95,5 +95,6 @@ router.post('/refresh', validate({ body: refreshSchema }), controller.refresh);
  *         description: Retorna el perfil del usuario
  */
 router.get('/profile', authMiddleware, controller.profile);
+router.post('/configure-organization', authMiddleware, controller.configureOrganization);
 
 export default router;

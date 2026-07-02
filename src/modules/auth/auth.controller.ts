@@ -54,4 +54,18 @@ export class AuthController {
       next(error);
     }
   };
+
+  configureOrganization = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        res.status(401).json({ success: false, message: 'Usuario no autenticado.' });
+        return;
+      }
+      const result = await this.authService.configureOrganization(userId, req.body);
+      sendSuccess(res, 'Organización configurada con éxito.', result);
+    } catch (error) {
+      next(error);
+    }
+  };
 }

@@ -1,4 +1,5 @@
 import { AuthRepository } from './auth.repository.js';
+import { prisma } from '../../config/database.js';
 import { comparePassword, hashPassword } from '../../utils/bcrypt.js';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../../utils/jwt.js';
 import {
@@ -204,6 +205,7 @@ export class AuthService {
       nombre: user.nombre,
       email: user.email,
       rol: user.rol.nombre,
+      organizacionConfigurada: user.organizacion ? user.organizacion.configuracion !== null : false,
       organizacion: user.organizacion
         ? {
             id: user.organizacion.id,
@@ -211,5 +213,70 @@ export class AuthService {
           }
         : null,
     };
+  }
+
+  async configureOrganization(userId: string, data: any) {
+    const user = await this.authRepository.findUserById(userId);
+    if (!user) {
+      throw new UnauthorizedError('Usuario no encontrado.');
+    }
+
+    const orgId = user.organizacionId;
+    if (!orgId) {
+      throw new BadRequestError('El usuario no pertenece a ninguna organización.');
+    }
+
+    // Guardar la configuración atómicamente e insertar el equipo
+    return prisma.$transaction(async (tx) => {
+      // 1. Guardar la configuración en la organización
+      const organizacionActualizada = await tx.organizacion.update({
+        where: { id: orgId },
+        data: {
+          configuracion: data.configuracion || {},
+        },
+      });
+
+      // 2. Si se provee equipo (cobradores/cajeros), crearlos
+      if (data.equipo && Array.isArray(data.equipo)) {
+        for (const member of data.equipo) {
+          const cleanEmail = member.email.trim().toLowerCase();
+          
+          // Verificar si ya existe el usuario
+          const existingUser = await tx.usuario.findUnique({ where: { email: cleanEmail } });
+          if (existingUser) continue; // Si ya existe, lo ignoramos
+
+          // Buscar el rol
+          const rolName = member.rol === 'COBRADOR' ? 'COBRADOR' : 'COBRADOR';
+          let rol = await tx.rol.findUnique({ where: { nombre: rolName } });
+          if (!rol) {
+            rol = await tx.rol.create({
+              data: {
+                nombre: rolName,
+                descripcion: `Rol de ${rolName.toLowerCase()}`,
+              },
+            });
+          }
+
+          const passwordHash = await hashPassword(member.password || 'Temp12345!');
+
+          // Crear miembro del equipo
+          await tx.usuario.create({
+            data: {
+              nombre: member.nombre,
+              email: cleanEmail,
+              password: passwordHash,
+              rolId: rol.id,
+              organizacionId: orgId,
+            },
+          });
+        }
+      }
+
+      return {
+        success: true,
+        organizacionId: orgId,
+        configuracion: organizacionActualizada.configuracion,
+      };
+    });
   }
 }
