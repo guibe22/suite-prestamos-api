@@ -11,6 +11,11 @@ export const registerSchema = z.object({
   password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres.'),
   rolNombre: z.string().default('ADMIN'),
   organizacionNombre: z.string().optional(),
+  code: z.string().length(6, 'El código de verificación debe tener 6 dígitos.'),
+});
+
+export const sendCodeSchema = z.object({
+  email: z.string().email('El correo electrónico no es válido.'),
 });
 
 export const refreshSchema = z.object({

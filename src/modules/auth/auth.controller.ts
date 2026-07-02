@@ -14,6 +14,15 @@ export class AuthController {
     }
   };
 
+  sendCode = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      await this.authService.sendVerificationCode(req.body.email);
+      sendSuccess(res, 'Código de verificación enviado con éxito.');
+    } catch (error) {
+      next(error);
+    }
+  };
+
   register = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const result = await this.authService.register(req.body);

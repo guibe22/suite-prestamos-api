@@ -8,6 +8,8 @@ import {
 } from '../../shared/errors/custom.error.js';
 import type { LoginInput, RegisterInput, UserSessionResponse } from './auth.types.js';
 
+const verificationCodes = new Map<string, { code: string; expiresAt: number }>();
+
 export class AuthService {
   private authRepository = new AuthRepository();
 
@@ -46,8 +48,84 @@ export class AuthService {
     };
   }
 
+  async sendVerificationCode(email: string): Promise<void> {
+    const cleanEmail = email.trim().toLowerCase();
+
+    // 1. Validar que el correo no esté registrado
+    const existingUser = await this.authRepository.findByEmail(cleanEmail);
+    if (existingUser) {
+      throw new ConflictError('El correo electrónico ya está registrado.');
+    }
+
+    // 2. Generar código de 6 dígitos
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Expiración en 10 minutos
+    const expiresAt = Date.now() + 10 * 60 * 1000;
+    verificationCodes.set(cleanEmail, { code, expiresAt });
+
+    // 3. Enviar correo usando la API de Resend vía HTTP fetch nativo
+    const apiKey = process.env.RESEND_API_KEY || 're_fkAXhFsq_PKyGAM6xLRhXcahzpvJjzcZC';
+
+    try {
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          from: 'Suite Préstamos <onboarding@resend.dev>',
+          to: cleanEmail,
+          subject: `${code} es tu código de verificación de Suite Préstamos`,
+          html: `
+            <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px; border: 1px solid #f0f0f0; border-radius: 16px; background-color: #ffffff;">
+              <h2 style="color: #059669; font-size: 22px; margin-bottom: 8px;">Verificación de correo electrónico</h2>
+              <p style="color: #4b5563; font-size: 15px; line-height: 24px;">Gracias por registrarte en <strong>Suite Préstamos</strong>. Para completar la creación de tu cuenta, ingresa el siguiente código de verificación temporal en la aplicación:</p>
+              <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 16px; text-align: center; margin: 24px 0;">
+                <span style="font-size: 32px; font-weight: 700; letter-spacing: 6px; color: #059669; font-family: monospace;">${code}</span>
+              </div>
+              <p style="color: #6b7280; font-size: 13px; line-height: 20px;">Este código es temporal y vencerá en <strong>10 minutos</strong>. Si no solicitaste este correo, puedes ignorarlo de forma segura.</p>
+              <hr style="border: none; border-top: 1px solid #f3f4f6; margin: 24px 0;" />
+              <p style="color: #9ca3af; font-size: 11px; text-align: center;">© ${new Date().getFullYear()} Suite Préstamos. Todos los derechos reservados.</p>
+            </div>
+          `,
+        }),
+      });
+
+      if (!response.ok) {
+        const errJson = (await response.json().catch(() => ({}))) as any;
+        console.error('Error de la API de Resend:', errJson);
+        throw new Error(errJson.message || `Error del servidor de correos (${response.status})`);
+      }
+    } catch (error: any) {
+      console.error('Fallo al enviar correo con Resend:', error);
+      throw new Error(`No se pudo enviar el correo de verificación: ${error.message}`);
+    }
+  }
+
   async register(data: RegisterInput): Promise<UserSessionResponse> {
-    const existingUser = await this.authRepository.findByEmail(data.email);
+    const cleanEmail = data.email.trim().toLowerCase();
+
+    // 1. Validar el código de verificación
+    const verification = verificationCodes.get(cleanEmail);
+    if (!verification) {
+      throw new BadRequestError('No se ha solicitado ningún código de verificación para este correo.');
+    }
+
+    if (Date.now() > verification.expiresAt) {
+      verificationCodes.delete(cleanEmail);
+      throw new BadRequestError('El código de verificación ha expirado. Solicita uno nuevo.');
+    }
+
+    if (verification.code !== data.code) {
+      throw new BadRequestError('El código de verificación ingresado es incorrecto.');
+    }
+
+    // Código válido: eliminar de la caché
+    verificationCodes.delete(cleanEmail);
+
+    const existingUser = await this.authRepository.findByEmail(cleanEmail);
     if (existingUser) {
       throw new ConflictError('El correo electrónico ya está registrado.');
     }

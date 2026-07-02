@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { AuthController } from './auth.controller.js';
 import { validate } from '../../middlewares/validate.middleware.js';
-import { loginSchema, registerSchema, refreshSchema } from './auth.schema.js';
+import { loginSchema, registerSchema, refreshSchema, sendCodeSchema } from './auth.schema.js';
 import { authMiddleware } from '../../middlewares/auth.middleware.js';
 
 const router = Router();
@@ -33,6 +33,7 @@ const controller = new AuthController();
  *       201:
  *         description: Usuario y organización creados exitosamente
  */
+router.post('/send-code', validate({ body: sendCodeSchema }), controller.sendCode);
 router.post('/register', validate({ body: registerSchema }), controller.register);
 
 /**
