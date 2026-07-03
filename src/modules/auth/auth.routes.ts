@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { AuthController } from './auth.controller.js';
 import { validate } from '../../middlewares/validate.middleware.js';
-import { loginSchema, registerSchema, refreshSchema, sendCodeSchema } from './auth.schema.js';
+import { loginSchema, registerSchema, refreshSchema, sendCodeSchema, changePasswordSchema } from './auth.schema.js';
 import { authMiddleware } from '../../middlewares/auth.middleware.js';
 
 const router = Router();
@@ -96,5 +96,33 @@ router.post('/refresh', validate({ body: refreshSchema }), controller.refresh);
  */
 router.get('/profile', authMiddleware, controller.profile);
 router.post('/configure-organization', authMiddleware, controller.configureOrganization);
+
+/**
+ * @swagger
+ * /auth/change-password:
+ *   post:
+ *     summary: Cambiar la contraseña del usuario autenticado
+ *     tags: [Autenticación]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [currentPassword, newPassword]
+ *             properties:
+ *               currentPassword:
+ *                 type: string
+ *               newPassword:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Contraseña actualizada con éxito
+ *       401:
+ *         description: Contraseña actual incorrecta
+ */
+router.post('/change-password', authMiddleware, validate({ body: changePasswordSchema }), controller.changePassword);
 
 export default router;

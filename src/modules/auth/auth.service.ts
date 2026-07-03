@@ -222,6 +222,21 @@ export class AuthService {
     };
   }
 
+  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+    const user = await this.authRepository.findUserById(userId);
+    if (!user) {
+      throw new UnauthorizedError('Usuario no encontrado.');
+    }
+
+    const isPasswordValid = await comparePassword(currentPassword, user.password);
+    if (!isPasswordValid) {
+      throw new UnauthorizedError('La contraseña actual es incorrecta.');
+    }
+
+    const passwordHash = await hashPassword(newPassword);
+    await this.authRepository.updatePassword(userId, passwordHash);
+  }
+
   async configureOrganization(userId: string, data: any) {
     const user = await this.authRepository.findUserById(userId);
     if (!user) {

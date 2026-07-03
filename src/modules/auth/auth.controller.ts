@@ -55,6 +55,20 @@ export class AuthController {
     }
   };
 
+  changePassword = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        res.status(401).json({ success: false, message: 'Usuario no autenticado.' });
+        return;
+      }
+      await this.authService.changePassword(userId, req.body.currentPassword, req.body.newPassword);
+      sendSuccess(res, 'Contraseña actualizada con éxito.');
+    } catch (error) {
+      next(error);
+    }
+  };
+
   configureOrganization = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const userId = req.user?.id;

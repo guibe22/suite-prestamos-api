@@ -22,6 +22,13 @@ export class AuthRepository {
     });
   }
 
+  async updatePassword(id: string, passwordHash: string) {
+    return prisma.usuario.update({
+      where: { id },
+      data: { password: passwordHash },
+    });
+  }
+
   async findRoleByName(nombre: string) {
     return prisma.rol.findUnique({
       where: { nombre },
