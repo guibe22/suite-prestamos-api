@@ -35,6 +35,53 @@ model Organizacion {
   usuarios  Usuario[]
   clientes  Cliente[]
   cajas     Caja[]
+  rutas     Ruta[]
+}
+
+enum DiaSemana {
+  LUNES
+  MARTES
+  MIERCOLES
+  JUEVES
+  VIERNES
+  SABADO
+  DOMINGO
+}
+
+model Ruta {
+  id             String       @id @default(cuid())
+  organizacionId String
+  organizacion   Organizacion @relation(fields: [organizacionId], references: [id], onDelete: Cascade)
+
+  /// Nombre visible de la ruta
+  /// Ej: "Santo Domingo"
+  nombre         String
+
+  /// Código opcional
+  /// Ej: SD-LUN
+  codigo         String?      @unique
+
+  /// Zona o sector donde se trabaja
+  zona           String?
+
+  /// Día habitual de trabajo
+  diaSemana      DiaSemana
+
+  /// Usuario responsable de la ruta
+  responsableId  String?
+  responsable    Usuario?     @relation(fields: [responsableId], references: [id])
+
+  /// Color para identificar la ruta en la app
+  color          String?
+
+  descripcion    String?
+
+  activa         Boolean      @default(true)
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
+  deletedBy      String?
 }
 
 model Rol {
@@ -56,6 +103,7 @@ model Usuario {
   rol            Rol          @relation(fields: [rolId], references: [id])
   organizacionId String?
   organizacion   Organizacion? @relation(fields: [organizacionId], references: [id])
+  rutas          Ruta[]
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   deletedAt      DateTime?

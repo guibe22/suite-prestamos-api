@@ -163,6 +163,14 @@ export class SincronizacionService {
         }),
       },
       {
+        name: 'rutas',
+        model: prisma.ruta,
+        whereClause: (date: Date | null) => ({
+          organizacionId,
+          ...(date ? { updatedAt: { gt: date } } : {}),
+        }),
+      },
+      {
         name: 'movimientos_cajas',
         model: prisma.movimientoCaja,
         whereClause: (date: Date | null) => ({
@@ -271,6 +279,7 @@ export class SincronizacionService {
       { name: 'cuotas', model: prisma.cuota, hasOrgId: false },
       { name: 'pagos', model: prisma.pago, hasOrgId: false },
       { name: 'gastos', model: prisma.gasto, hasOrgId: false },
+      { name: 'rutas', model: prisma.ruta, hasOrgId: true },
       { name: 'movimientos_cajas', model: prisma.movimientoCaja, hasOrgId: false },
     ];
 
