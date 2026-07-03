@@ -10,7 +10,9 @@ const app = express();
 
 // Middlewares globales
 app.use(cors());
-app.use(express.json());
+// Límite amplio para admitir imágenes en base64 (p. ej. el logo de la empresa
+// dentro de configuracion.logo). El default de express es 100kb.
+app.use(express.json({ limit: '5mb' }));
 
 // Logger de peticiones básico
 app.use((req, _res, next) => {
