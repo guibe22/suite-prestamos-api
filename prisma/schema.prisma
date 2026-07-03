@@ -36,6 +36,7 @@ model Organizacion {
   clientes  Cliente[]
   cajas     Caja[]
   rutas     Ruta[]
+  jornadas  JornadaCobranza[]
 }
 
 enum DiaSemana {
@@ -79,6 +80,7 @@ model Ruta {
   activa         Boolean      @default(true)
 
   clientes       Cliente[]
+  jornadas       JornadaCobranza[]
 
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
@@ -106,6 +108,7 @@ model Usuario {
   organizacionId String?
   organizacion   Organizacion? @relation(fields: [organizacionId], references: [id])
   rutas          Ruta[]
+  jornadas       JornadaCobranza[]
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   deletedAt      DateTime?
@@ -388,4 +391,32 @@ model Sincronizacion {
   ultimoSincroAt DateTime
   tabla          String
   createdAt      DateTime @default(now())
+}
+
+enum EstadoJornada {
+  ABIERTA
+  CERRADA
+}
+
+model JornadaCobranza {
+  id              String   @id @default(uuid())
+  organizacionId  String
+  organizacion    Organizacion @relation(fields: [organizacionId], references: [id], onDelete: Cascade)
+  usuarioId       String
+  usuario         Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  rutaId          String
+  ruta            Ruta     @relation(fields: [rutaId], references: [id], onDelete: Cascade)
+  fecha           DateTime
+  saldoInicial    Decimal  @db.Decimal(12, 2)
+  saldoFinal      Decimal? @db.Decimal(12, 2)
+  efectivoCobrado Decimal  @db.Decimal(12, 2) @default(0)
+  prestamos       Decimal  @db.Decimal(12, 2) @default(0)
+  gastos          Decimal  @db.Decimal(12, 2) @default(0)
+  estado          EstadoJornada @default(ABIERTA)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  deletedAt       DateTime?
+  deletedBy       String?
+
+  @@map("jornadas_cobranza")
 }

@@ -66,6 +66,7 @@ export class SincronizacionService {
       'fechaCierre',
       'fechaGasto',
       'fechaNacimiento',
+      'fecha',
     ];
 
     for (const field of dateFields) {
@@ -222,6 +223,14 @@ export class SincronizacionService {
           ...(date ? { createdAt: { gt: date } } : {}),
         }),
       },
+      {
+        name: 'jornadas_cobranza',
+        model: prisma.jornadaCobranza,
+        whereClause: (date: Date | null) => ({
+          organizacionId,
+          ...(date ? { updatedAt: { gt: date } } : {}),
+        }),
+      },
     ];
 
     for (const table of tables) {
@@ -320,6 +329,7 @@ export class SincronizacionService {
       { name: 'organizaciones', model: prisma.organizacion, hasOrgId: false },
       { name: 'usuarios', model: prisma.usuario, hasOrgId: true },
       { name: 'rutas', model: prisma.ruta, hasOrgId: true },
+      { name: 'jornadas_cobranza', model: prisma.jornadaCobranza, hasOrgId: true },
       { name: 'clientes', model: prisma.cliente, hasOrgId: true },
       { name: 'cajas', model: prisma.caja, hasOrgId: true },
       { name: 'prestamos', model: prisma.prestamo, hasOrgId: false },
@@ -368,6 +378,7 @@ export class SincronizacionService {
           case 'pagos': return 'pago';
           case 'gastos': return 'gasto';
           case 'movimientos_cajas': return 'movimientoCaja';
+          case 'jornadas_cobranza': return 'jornadaCobranza';
           default: return tableName.replace(/s$/, '');
         }
       };
