@@ -15,5 +15,6 @@ export interface UserSessionResponse {
   email: string;
   rol: string;
   organizacionId?: string | null;
+  organizacionConfigurada: boolean;
   tokens: TokenResponse;
 }

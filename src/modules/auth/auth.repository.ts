@@ -7,6 +7,7 @@ export class AuthRepository {
       where: { email, deletedAt: null },
       include: {
         rol: true,
+        organizacion: true,
       },
     });
   }

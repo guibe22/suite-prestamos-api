@@ -42,6 +42,7 @@ export class AuthService {
       email: user.email,
       rol: user.rol.nombre,
       organizacionId: user.organizacionId,
+      organizacionConfigurada: user.organizacion ? user.organizacion.configuracion !== null : false,
       tokens: {
         accessToken,
         refreshToken,
@@ -159,6 +160,8 @@ export class AuthService {
       email: usuario.email,
       rol: usuario.rol.nombre,
       organizacionId: usuario.organizacionId,
+      // Una organización recién creada aún no tiene configuración.
+      organizacionConfigurada: false,
       tokens: {
         accessToken,
         refreshToken,
