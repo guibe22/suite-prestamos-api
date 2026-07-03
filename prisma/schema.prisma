@@ -78,6 +78,8 @@ model Ruta {
 
   activa         Boolean      @default(true)
 
+  clientes       Cliente[]
+
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   deletedAt      DateTime?
@@ -120,6 +122,10 @@ model Cliente {
   direccion      String?
   organizacionId String
   organizacion   Organizacion @relation(fields: [organizacionId], references: [id])
+  rutaId         String?
+  ruta           Ruta?        @relation(fields: [rutaId], references: [id])
+  estado         String       @default("ACTIVO")
+
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   deletedAt      DateTime?
