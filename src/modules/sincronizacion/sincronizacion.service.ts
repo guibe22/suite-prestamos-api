@@ -85,6 +85,28 @@ export class SincronizacionService {
    * que apliquen los defaults, y coalescemos los String requeridos que
    * registros locales antiguos (pre-modelo de negocio) traen en null.
    */
+  /**
+   * Auto-reparación de FK: si un cliente referencia una ruta que no existe en
+   * el servidor (p. ej. el dispositivo la tiene marcada como sincronizada
+   * contra una base anterior), se crea una ruta mínima con ese id para no
+   * romper la restricción. El cobrador puede renombrarla después.
+   */
+  private async ensureRutaExists(tx: any, rutaId: string, organizacionId: string): Promise<void> {
+    const existe = await tx.ruta.findUnique({ where: { id: rutaId }, select: { id: true } });
+    if (existe) return;
+    logger.warn(
+      `⚠️  [SYNC PUSH] La ruta ${rutaId} no existe en el servidor; se crea un placeholder para preservar la FK del cliente.`
+    );
+    await tx.ruta.create({
+      data: {
+        id: rutaId,
+        organizacionId,
+        nombre: 'Ruta recuperada',
+        diaSemana: 'LUNES',
+      },
+    });
+  }
+
   private sanitizeForPrisma(tableName: string, data: any): any {
     if (tableName === 'clientes') {
       for (const campo of ['puntuacion', 'nivelRiesgo', 'calificacion', 'ordenRuta', 'estado']) {
@@ -291,17 +313,19 @@ export class SincronizacionService {
       return;
     }
 
-    // Definimos el orden de las operaciones para evitar problemas de FK
+    // Definimos el orden de las operaciones para evitar problemas de FK.
+    // rutas va ANTES que clientes: Cliente.rutaId es FK obligatoria, así que
+    // una ruta creada en el dispositivo debe existir antes que sus clientes.
     const tableOrder = [
       { name: 'organizaciones', model: prisma.organizacion, hasOrgId: false },
       { name: 'usuarios', model: prisma.usuario, hasOrgId: true },
+      { name: 'rutas', model: prisma.ruta, hasOrgId: true },
       { name: 'clientes', model: prisma.cliente, hasOrgId: true },
       { name: 'cajas', model: prisma.caja, hasOrgId: true },
       { name: 'prestamos', model: prisma.prestamo, hasOrgId: false },
       { name: 'cuotas', model: prisma.cuota, hasOrgId: false },
       { name: 'pagos', model: prisma.pago, hasOrgId: false },
       { name: 'gastos', model: prisma.gasto, hasOrgId: false },
-      { name: 'rutas', model: prisma.ruta, hasOrgId: true },
       { name: 'movimientos_cajas', model: prisma.movimientoCaja, hasOrgId: false },
     ];
 
@@ -388,6 +412,10 @@ export class SincronizacionService {
               mappedData.organizacionId = organizacionId;
             }
 
+            if (table.name === 'clientes' && mappedData.rutaId) {
+              await this.ensureRutaExists(tx, mappedData.rutaId, organizacionId);
+            }
+
             // Realizamos upsert para evitar errores de duplicidad si por alguna razón la petición falló a medio camino previamente
             const { id, ...dataWithoutId } = mappedData;
             await modelTx.upsert({
@@ -402,6 +430,11 @@ export class SincronizacionService {
         if (tableChanges.updated.length > 0) {
           for (const item of tableChanges.updated) {
             const mappedData = this.sanitizeForPrisma(table.name, this.mapClientDataToPrisma(item));
+
+            if (table.name === 'clientes' && mappedData.rutaId) {
+              await this.ensureRutaExists(tx, mappedData.rutaId, organizacionId);
+            }
+
             const { id, ...dataWithoutId } = mappedData;
 
             await modelTx.update({
