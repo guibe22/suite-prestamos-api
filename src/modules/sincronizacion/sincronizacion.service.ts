@@ -65,6 +65,7 @@ export class SincronizacionService {
       'fechaApertura',
       'fechaCierre',
       'fechaGasto',
+      'fechaNacimiento',
     ];
 
     for (const field of dateFields) {
@@ -74,6 +75,27 @@ export class SincronizacionService {
     }
 
     return prismaData;
+  }
+
+  /**
+   * Normaliza registros por tabla para que Prisma los acepte.
+   * Si un campo NOT NULL con default llega en null, el payload deja de encajar
+   * en el input "unchecked" (con FKs escalares) y Prisma exige el objeto de
+   * relación ("Argument organizacion is missing"). Eliminamos esos nulls para
+   * que apliquen los defaults, y coalescemos los String requeridos que
+   * registros locales antiguos (pre-modelo de negocio) traen en null.
+   */
+  private sanitizeForPrisma(tableName: string, data: any): any {
+    if (tableName === 'clientes') {
+      for (const campo of ['puntuacion', 'nivelRiesgo', 'calificacion', 'ordenRuta', 'estado']) {
+        if (data[campo] === null || data[campo] === undefined) delete data[campo];
+      }
+      data.nombres = data.nombres ?? '';
+      data.telefono = data.telefono ?? '';
+      data.direccion = data.direccion ?? '';
+      if (!data.codigo) data.codigo = `C-${String(data.id ?? '').slice(-6).toUpperCase()}`;
+    }
+    return data;
   }
 
   /**
@@ -359,8 +381,8 @@ export class SincronizacionService {
         // Creaciones
         if (tableChanges.created.length > 0) {
           for (const item of tableChanges.created) {
-            const mappedData = this.mapClientDataToPrisma(item);
-            
+            const mappedData = this.sanitizeForPrisma(table.name, this.mapClientDataToPrisma(item));
+
             // Forzar que el registro pertenezca a la organizacion del usuario si el modelo lo tiene
             if (table.hasOrgId) {
               mappedData.organizacionId = organizacionId;
@@ -379,7 +401,7 @@ export class SincronizacionService {
         // Actualizaciones
         if (tableChanges.updated.length > 0) {
           for (const item of tableChanges.updated) {
-            const mappedData = this.mapClientDataToPrisma(item);
+            const mappedData = this.sanitizeForPrisma(table.name, this.mapClientDataToPrisma(item));
             const { id, ...dataWithoutId } = mappedData;
 
             await modelTx.update({

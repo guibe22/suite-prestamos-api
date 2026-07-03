@@ -1,5 +1,7 @@
 import { AuthRepository } from './auth.repository.js';
 import { prisma } from '../../config/database.js';
+import { env } from '../../config/env.js';
+import { logger } from '../../config/logger.js';
 import { comparePassword, hashPassword } from '../../utils/bcrypt.js';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../../utils/jwt.js';
 import {
@@ -101,6 +103,14 @@ export class AuthService {
         throw new Error(errJson.message || `Error del servidor de correos (${response.status})`);
       }
     } catch (error: any) {
+      // El dominio sandbox de Resend (onboarding@resend.dev) solo permite enviar
+      // al correo del dueño de la cuenta. En desarrollo no bloqueamos el registro:
+      // el código queda en la consola del servidor y el flujo continúa.
+      if (env.NODE_ENV !== 'production') {
+        logger.warn(`⚠️  No se pudo enviar el correo a ${cleanEmail}: ${error.message}`);
+        logger.warn(`🔑 [SOLO DESARROLLO] Código de verificación para ${cleanEmail}: ${code}`);
+        return;
+      }
       console.error('Fallo al enviar correo con Resend:', error);
       throw new Error(`No se pudo enviar el correo de verificación: ${error.message}`);
     }

@@ -72,21 +72,39 @@ async function main() {
   });
   console.log('✅ Usuario Administrador creado:', adminUser.email);
 
-  // 5. Clientes demo (para tener datos de prueba que bajen por el PULL de sync)
-  const clientesDemo = [
-    { nombre: 'Cliente Demo Uno', identificacion: '10000001', telefono: '+51 900 000 001', direccion: 'Av. Siempre Viva 100' },
-    { nombre: 'Cliente Demo Dos', identificacion: '10000002', telefono: '+51 900 000 002', direccion: 'Jr. Los Olivos 200' },
-    { nombre: 'Cliente Demo Tres', identificacion: '10000003', telefono: '+51 900 000 003', direccion: 'Calle Las Flores 300' },
-  ];
   // Usar la organización REAL del admin (upsert puede devolver un admin
   // preexistente cuya org no sea la recién creada). Así el PULL, que filtra
   // clientes por la org del usuario autenticado, sí los devuelve.
   const orgIdAdmin = adminUser.organizacionId ?? orgDefecto.id;
+
+  // 5. Ruta demo (los clientes requieren una ruta asignada)
+  let rutaDemo = await prisma.ruta.findFirst({
+    where: { organizacionId: orgIdAdmin },
+  });
+  if (!rutaDemo) {
+    rutaDemo = await prisma.ruta.create({
+      data: {
+        organizacionId: orgIdAdmin,
+        nombre: 'Ruta Demo Centro',
+        codigo: 'RD-CENTRO',
+        zona: 'Centro',
+        diaSemana: 'LUNES',
+      },
+    });
+  }
+  console.log('✅ Ruta demo lista:', rutaDemo.nombre);
+
+  // 6. Clientes demo (para tener datos de prueba que bajen por el PULL de sync)
+  const clientesDemo = [
+    { codigo: 'C-000001', nombres: 'Cliente Demo', apellidos: 'Uno', identificacion: '001-0000001-1', telefono: '809-000-0001', direccion: 'Av. Siempre Viva 100' },
+    { codigo: 'C-000002', nombres: 'Cliente Demo', apellidos: 'Dos', identificacion: '001-0000002-2', telefono: '809-000-0002', direccion: 'Jr. Los Olivos 200' },
+    { codigo: 'C-000003', nombres: 'Cliente Demo', apellidos: 'Tres', identificacion: '001-0000003-3', telefono: '809-000-0003', direccion: 'Calle Las Flores 300' },
+  ];
   for (const c of clientesDemo) {
     await prisma.cliente.upsert({
-      where: { identificacion: c.identificacion },
-      update: { nombre: c.nombre, telefono: c.telefono, direccion: c.direccion, organizacionId: orgIdAdmin },
-      create: { ...c, organizacionId: orgIdAdmin },
+      where: { organizacionId_codigo: { organizacionId: orgIdAdmin, codigo: c.codigo } },
+      update: { ...c, organizacionId: orgIdAdmin, rutaId: rutaDemo.id },
+      create: { ...c, organizacionId: orgIdAdmin, rutaId: rutaDemo.id },
     });
   }
   console.log(`✅ ${clientesDemo.length} clientes demo creados en la organización del admin (${orgIdAdmin}).`);

@@ -114,37 +114,164 @@ model Usuario {
   auditorias     Auditoria[]
 }
 
+enum EstadoCliente {
+  ACTIVO
+  INACTIVO
+  SUSPENDIDO
+  BLOQUEADO
+}
+
+enum NivelRiesgo {
+  BAJO
+  MEDIO
+  ALTO
+}
+
+enum CalificacionCliente {
+  EXCELENTE
+  BUENO
+  REGULAR
+  RIESGOSO
+  BLOQUEADO
+}
+
+enum Sexo {
+  MASCULINO
+  FEMENINO
+  OTRO
+}
+
 model Cliente {
-  id                 String       @id @default(uuid())
-  nombre             String
-  apellidos          String?
-  codigo             String?
-  identificacion     String       @unique
-  telefono           String?
-  telefonoSecundario String?
-  correo             String?
-  direccion          String?
-  sector             String?
-  ciudad             String?
-  provincia          String?
-  referencia         String?
-  latitud            Float?
-  longitud           Float?
-  empresa            String?
-  ocupacion          String?
-  observaciones      String?
-  organizacionId     String
-  organizacion       Organizacion @relation(fields: [organizacionId], references: [id])
-  rutaId             String?
-  ruta               Ruta?        @relation(fields: [rutaId], references: [id])
-  estado             String       @default("ACTIVO")
+  id               String               @id @default(uuid())
 
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  deletedAt      DateTime?
-  deletedBy      String?
+  // Organización
+  organizacionId   String
+  organizacion     Organizacion         @relation(fields: [organizacionId], references: [id], onDelete: Cascade)
 
-  prestamos      Prestamo[]
+  // Ruta
+  rutaId           String
+  ruta             Ruta                 @relation(fields: [rutaId], references: [id])
+
+  // Identificación interna
+  codigo           String
+
+  // Datos personales
+  nombres          String
+  apellidos        String?
+  identificacion   String?
+  fechaNacimiento  DateTime?
+  sexo             Sexo?
+
+  // Contacto
+  telefono         String
+  telefono2        String?
+  correo           String?
+
+  // Dirección
+  direccion        String
+  sector           String?
+  ciudad           String?
+  provincia        String?
+  referencia       String?
+
+  // Geolocalización
+  latitud          Float?
+  longitud         Float?
+
+  // Información laboral
+  empresa          String?
+  ocupacion        String?
+  ingresosMensuales Decimal?            @db.Decimal(12, 2)
+
+  // Perfil financiero: valores de negocio recalculados por eventos
+  // (pago puntual, atraso, renovación). Los agregados (total prestado,
+  // mora acumulada, etc.) NO se guardan aquí: se derivan de Prestamo/Pago.
+  puntuacion       Int                  @default(100)
+  nivelRiesgo      NivelRiesgo          @default(BAJO)
+  calificacion     CalificacionCliente  @default(BUENO)
+
+  // Organización de la ruta
+  ordenRuta        Int                  @default(0)
+
+  // Estado
+  estado           EstadoCliente        @default(ACTIVO)
+
+  // Notas internas
+  observaciones    String?
+
+  // Auditoría
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  deletedAt        DateTime?
+  deletedBy        String?
+
+  // Relaciones
+  prestamos        Prestamo[]
+  referencias      ReferenciaCliente[]
+  avales           Aval[]
+  documentos       DocumentoCliente[]
+
+  @@unique([organizacionId, codigo])
+  @@unique([organizacionId, identificacion])
+  @@index([organizacionId])
+  @@index([rutaId])
+  @@index([telefono])
+  @@index([estado])
+  @@index([calificacion])
+  @@index([nivelRiesgo])
+}
+
+model ReferenciaCliente {
+  id         String   @id @default(uuid())
+
+  clienteId  String
+  cliente    Cliente  @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  nombre     String
+  parentesco String?
+  telefono   String
+  direccion  String?
+
+  createdAt  DateTime @default(now())
+}
+
+model Aval {
+  id             String   @id @default(uuid())
+
+  clienteId      String
+  cliente        Cliente  @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  nombre         String
+  identificacion String?
+  telefono       String
+  direccion      String?
+  parentesco     String?
+
+  createdAt      DateTime @default(now())
+}
+
+enum TipoDocumento {
+  CEDULA_FRENTE
+  CEDULA_REVERSO
+  CONTRATO
+  FOTO_CLIENTE
+  FOTO_VIVIENDA
+  FOTO_NEGOCIO
+  OTRO
+}
+
+model DocumentoCliente {
+  id        String        @id @default(uuid())
+
+  clienteId String
+  cliente   Cliente       @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  tipo      TipoDocumento
+
+  nombre    String
+  archivo   String
+
+  createdAt DateTime      @default(now())
 }
 
 model Prestamo {
