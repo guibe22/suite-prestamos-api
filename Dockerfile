@@ -1,6 +1,8 @@
 # Stage 1: Build
 FROM node:22-alpine AS builder
 WORKDIR /app
+# El lockfile se genera con npm 11 en desarrollo; npm 10 (el que trae la imagen) lo rechaza en `npm ci`
+RUN npm install -g npm@11
 COPY package*.json ./
 COPY prisma ./prisma/
 RUN npm ci
