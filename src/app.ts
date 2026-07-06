@@ -70,6 +70,19 @@ app.get('/health', (_req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date() });
 });
 
+// Endpoint temporal para recibir logs de depuración del cliente
+app.post('/api/debug-log', (req, res) => {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const logMsg = `[${new Date().toISOString()}] ${JSON.stringify(req.body, null, 2)}\n\n`;
+    fs.appendFileSync(path.join(process.cwd(), 'app_debug_logs.txt'), logMsg);
+  } catch (err) {
+    // ignorar fallos al escribir
+  }
+  res.sendStatus(200);
+});
+
 // Manejo de errores
 app.use(errorMiddleware);
 
