@@ -4,6 +4,9 @@
   "description": "API backend para la plataforma de préstamos Suite",
   "main": "dist/server.js",
   "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
