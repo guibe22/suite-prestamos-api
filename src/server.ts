@@ -39,7 +39,7 @@ const startServer = async () => {
     });
 
     const shutdown = async () => {
-      logger.info('关闭 ⏳ Apagando el servidor elegantemente...');
+      logger.info('⏳ Apagando el servidor elegantemente...');
       server.close(async () => {
         await prisma.$disconnect();
         logger.info('🛑 Conexiones de base de datos cerradas. Servidor apagado.');
