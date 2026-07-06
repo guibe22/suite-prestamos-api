@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { AuthRepository } from './auth.repository.js';
 import { prisma } from '../../config/database.js';
 import { env } from '../../config/env.js';
@@ -69,7 +70,17 @@ export class AuthService {
     verificationCodes.set(cleanEmail, { code, expiresAt });
 
     // 3. Enviar correo usando la API de Resend vía HTTP fetch nativo
-    const apiKey = process.env.RESEND_API_KEY || 're_fkAXhFsq_PKyGAM6xLRhXcahzpvJjzcZC';
+    const apiKey = env.RESEND_API_KEY;
+    if (!apiKey) {
+      // Sin clave configurada: en desarrollo el código queda en consola; en
+      // producción es un fallo de configuración que debe conocerse.
+      if (env.NODE_ENV !== 'production') {
+        logger.warn(`⚠️  RESEND_API_KEY no configurada.`);
+        logger.warn(`🔑 [SOLO DESARROLLO] Código de verificación para ${cleanEmail}: ${code}`);
+        return;
+      }
+      throw new Error('El servicio de correo no está configurado (RESEND_API_KEY).');
+    }
 
     try {
       const response = await fetch('https://api.resend.com/emails', {
@@ -79,7 +90,7 @@ export class AuthService {
           'Authorization': `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          from: 'Suite Préstamos <onboarding@resend.dev>',
+          from: env.RESEND_FROM,
           to: cleanEmail,
           subject: `${code} es tu código de verificación de Suite Préstamos`,
           html: `
@@ -142,9 +153,13 @@ export class AuthService {
       throw new ConflictError('El correo electrónico ya está registrado.');
     }
 
-    const rol = await this.authRepository.findRoleByName(data.rolNombre);
+    // El registro público siempre crea al dueño de una organización nueva como
+    // ADMIN. No se acepta el rol desde el cliente para evitar auto-asignación de
+    // roles privilegiados.
+    const rolNombre = 'ADMIN';
+    const rol = await this.authRepository.findRoleByName(rolNombre);
     if (!rol) {
-      throw new BadRequestError(`El rol '${data.rolNombre}' no es válido.`);
+      throw new BadRequestError(`El rol '${rolNombre}' no es válido.`);
     }
 
     const passwordHash = await hashPassword(data.password);
@@ -295,8 +310,8 @@ export class AuthService {
           const existingUser = await tx.usuario.findUnique({ where: { email: cleanEmail } });
           if (existingUser) continue; // Si ya existe, lo ignoramos
 
-          // Buscar el rol
-          const rolName = member.rol === 'COBRADOR' ? 'COBRADOR' : 'COBRADOR';
+          // Buscar el rol solicitado (validado por el schema); por defecto COBRADOR
+          const rolName = member.rol || 'COBRADOR';
           let rol = await tx.rol.findUnique({ where: { nombre: rolName } });
           if (!rol) {
             rol = await tx.rol.create({
@@ -307,7 +322,17 @@ export class AuthService {
             });
           }
 
-          const passwordHash = await hashPassword(member.password || 'Temp12345!');
+          // Si el admin no fija contraseña, se genera una aleatoria fuerte (nunca
+          // una credencial por defecto conocida). Se registra para que el admin
+          // pueda comunicársela al miembro.
+          let plainPassword = member.password;
+          if (!plainPassword) {
+            plainPassword = randomBytes(9).toString('base64url');
+            logger.warn(
+              `🔑 Contraseña temporal generada para ${cleanEmail}: ${plainPassword} (comunícala de forma segura y pide cambiarla).`
+            );
+          }
+          const passwordHash = await hashPassword(plainPassword);
 
           // Crear miembro del equipo
           await tx.usuario.create({

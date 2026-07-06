@@ -8,7 +8,7 @@ export const loginSchema = z.object({
 export const registerSchema = z.object({
   nombre: z.string().min(2, 'El nombre debe tener al menos 2 caracteres.'),
   email: z.string().email('El correo electrónico no es válido.'),
-  password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres.'),
+  password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres.'),
   rolNombre: z.string().default('ADMIN'),
   organizacionNombre: z.string().optional(),
   code: z.string().length(6, 'El código de verificación debe tener 6 dígitos.'),
@@ -24,5 +24,19 @@ export const refreshSchema = z.object({
 
 export const changePasswordSchema = z.object({
   currentPassword: z.string().min(1, 'La contraseña actual es requerida.'),
-  newPassword: z.string().min(6, 'La nueva contraseña debe tener al menos 6 caracteres.'),
+  newPassword: z.string().min(8, 'La nueva contraseña debe tener al menos 8 caracteres.'),
+});
+
+export const configureOrganizationSchema = z.object({
+  configuracion: z.record(z.string(), z.any()).optional(),
+  equipo: z
+    .array(
+      z.object({
+        nombre: z.string().min(2, 'El nombre del miembro es requerido.'),
+        email: z.string().email('El correo del miembro no es válido.'),
+        rol: z.enum(['COBRADOR', 'CAJERO', 'ADMIN']).optional(),
+        password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres.').optional(),
+      })
+    )
+    .optional(),
 });

@@ -122,6 +122,120 @@ export class SincronizacionService {
   }
 
   /**
+   * Convierte el nombre de tabla de WatermelonDB (snake_case, plural) al nombre
+   * del accessor de Prisma (camelCase, singular). Debe usarse en TODOS los paths
+   * (create/update/delete): un mapeo hecho a mano en un solo path fue el origen
+   * de un bug donde `jornadas_cobranza` resolvía a `jornadasCobranza` (accessor
+   * real: `jornadaCobranza`) y reventaba el borrado.
+   */
+  private getModelName(tableName: string): string {
+    switch (tableName) {
+      case 'organizaciones': return 'organizacion';
+      case 'usuarios': return 'usuario';
+      case 'clientes': return 'cliente';
+      case 'cajas': return 'caja';
+      case 'prestamos': return 'prestamo';
+      case 'cuotas': return 'cuota';
+      case 'pagos': return 'pago';
+      case 'gastos': return 'gasto';
+      case 'movimientos_cajas': return 'movimientoCaja';
+      case 'jornadas_cobranza': return 'jornadaCobranza';
+      default: return tableName.replace(/s$/, '');
+    }
+  }
+
+  /**
+   * Filtro `where` que restringe cualquier registro a la organización del
+   * usuario. Se aplica en TODA escritura del push (update/delete y verificación
+   * de propiedad en create) para impedir accesos cross-tenant: sin esto, un
+   * dispositivo podía modificar/borrar registros de otra organización enviando
+   * su `id`.
+   */
+  private orgScopeWhere(tableName: string, organizacionId: string): any {
+    switch (tableName) {
+      case 'organizaciones':
+        return { id: organizacionId };
+      case 'usuarios':
+      case 'rutas':
+      case 'jornadas_cobranza':
+      case 'clientes':
+      case 'cajas':
+        return { organizacionId };
+      case 'prestamos':
+        return { cliente: { organizacionId } };
+      case 'cuotas':
+      case 'pagos':
+        return { prestamo: { cliente: { organizacionId } } };
+      case 'gastos':
+      case 'movimientos_cajas':
+        return { caja: { organizacionId } };
+      default:
+        return {};
+    }
+  }
+
+  /**
+   * Verifica que el registro padre referenciado por una FK pertenezca a la
+   * organización del usuario, antes de crear un hijo (préstamo/cuota/pago/gasto/
+   * movimiento). Evita colgar registros de clientes/cajas de otra organización.
+   */
+  private async validateParentInOrg(
+    tx: any,
+    tableName: string,
+    data: any,
+    organizacionId: string
+  ): Promise<boolean> {
+    switch (tableName) {
+      case 'prestamos': {
+        if (!data.clienteId) return false;
+        const c = await tx.cliente.findFirst({
+          where: { id: data.clienteId, organizacionId },
+          select: { id: true },
+        });
+        return !!c;
+      }
+      case 'cuotas':
+      case 'pagos': {
+        if (!data.prestamoId) return false;
+        const p = await tx.prestamo.findFirst({
+          where: { id: data.prestamoId, cliente: { organizacionId } },
+          select: { id: true },
+        });
+        return !!p;
+      }
+      case 'gastos':
+      case 'movimientos_cajas': {
+        if (!data.cajaId) return false;
+        const caja = await tx.caja.findFirst({
+          where: { id: data.cajaId, organizacionId },
+          select: { id: true },
+        });
+        return !!caja;
+      }
+      default:
+        // Tablas con organizacionId directo: el propio push fuerza el org.
+        return true;
+    }
+  }
+
+  /**
+   * Elimina campos que el cliente NUNCA debe poder fijar vía sync. `organizacionId`
+   * y `cuentaId` se gestionan en el servidor; en `usuarios` se bloquean además las
+   * credenciales y el rol para impedir escalada de privilegios (un cobrador
+   * pusheando `rolId=ADMIN` o un `password` conocido).
+   */
+  private stripProtectedFields(tableName: string, data: any): any {
+    delete data.organizacionId;
+    delete data.cuentaId;
+    if (tableName === 'usuarios') {
+      delete data.password;
+      delete data.rolId;
+      delete data.email;
+    }
+    return data;
+  }
+
+  /**
    * Pull: Retorna los cambios del servidor ocurridos desde lastPulledAt para la organizacion dada
    */
   async pull(lastPulledAt: number, organizacionId: string): Promise<PullResponse> {
@@ -154,6 +268,8 @@ export class SincronizacionService {
       {
         name: 'usuarios',
         model: prisma.usuario,
+        // Nunca se envía el hash de la contraseña a los dispositivos.
+        omit: { password: true },
         whereClause: (date: Date | null) => ({
           organizacionId,
           ...(date ? { updatedAt: { gt: date } } : {}),
@@ -243,6 +359,7 @@ export class SincronizacionService {
       // Buscar todos los registros que cambiaron (o todos si lastPulledDate es nulo)
       const records = await (table.model as any).findMany({
         where: queryWhere,
+        ...((table as any).omit ? { omit: (table as any).omit } : {}),
       });
 
       for (const record of records) {
@@ -343,20 +460,26 @@ export class SincronizacionService {
     await prisma.$transaction(async (tx) => {
       // 1. Procesar Eliminaciones (de atrás hacia adelante en orden para evitar romper FKs en cascada)
       for (const table of [...tableOrder].reverse()) {
-        // La organización no se elimina desde el cliente
-        if (table.name === 'organizaciones') continue;
+        // La organización no se elimina desde el cliente; los usuarios se
+        // gestionan solo en el servidor (nunca vía sync).
+        if (table.name === 'organizaciones' || table.name === 'usuarios') continue;
         const tableChanges = changes[table.name];
         if (tableChanges && tableChanges.deleted.length > 0) {
           const idsToDelete = tableChanges.deleted;
+          const modelTx = (tx as any)[this.getModelName(table.name)];
+          // El `where` se restringe a la organización del usuario: un id de otra
+          // organización simplemente no coincide (0 filas afectadas), en vez de
+          // permitir un borrado cross-tenant.
+          const orgScope = this.orgScopeWhere(table.name, organizacionId);
 
           // Borrado lógico actualizando el campo deletedAt (excepto movimientoCaja que no tiene)
           if (table.name === 'movimientos_cajas') {
-            await (tx as any).movimientoCaja.deleteMany({
-              where: { id: { in: idsToDelete } },
+            await modelTx.deleteMany({
+              where: { id: { in: idsToDelete }, ...orgScope },
             });
           } else {
-            await (tx as any)[table.name.replace(/_([a-z])/g, (g) => g[1].toUpperCase()).replace(/s$/, '')].updateMany({
-              where: { id: { in: idsToDelete } },
+            await modelTx.updateMany({
+              where: { id: { in: idsToDelete }, ...orgScope },
               data: {
                 deletedAt: new Date(),
                 deletedBy: userId,
@@ -366,30 +489,26 @@ export class SincronizacionService {
         }
       }
 
-      // Helper para convertir el nombre de la tabla de WatermelonDB al nombre de modelo de Prisma
-      const getModelName = (tableName: string) => {
-        switch (tableName) {
-          case 'organizaciones': return 'organizacion';
-          case 'usuarios': return 'usuario';
-          case 'clientes': return 'cliente';
-          case 'cajas': return 'caja';
-          case 'prestamos': return 'prestamo';
-          case 'cuotas': return 'cuota';
-          case 'pagos': return 'pago';
-          case 'gastos': return 'gasto';
-          case 'movimientos_cajas': return 'movimientoCaja';
-          case 'jornadas_cobranza': return 'jornadaCobranza';
-          default: return tableName.replace(/s$/, '');
-        }
-      };
-
       // 2. Procesar Creaciones y Actualizaciones
       for (const table of tableOrder) {
         const tableChanges = changes[table.name];
         if (!tableChanges) continue;
 
-        const modelName = getModelName(table.name);
+        // Los usuarios (credenciales, roles) se administran exclusivamente en el
+        // servidor. Nunca se crean ni modifican vía sync para cerrar el vector de
+        // escalada de privilegios.
+        if (table.name === 'usuarios') {
+          if (tableChanges.created.length || tableChanges.updated.length) {
+            logger.warn(
+              `⚠️  [SYNC PUSH] Se ignoraron ${tableChanges.created.length + tableChanges.updated.length} cambios en 'usuarios' (no editable vía sync).`
+            );
+          }
+          continue;
+        }
+
+        const modelName = this.getModelName(table.name);
         const modelTx = (tx as any)[modelName];
+        const orgScope = this.orgScopeWhere(table.name, organizacionId);
 
         // La organización nunca se crea desde el cliente: ya existe en el servidor
         // (se crea en el registro) y el registro local puede traer un id distinto.
@@ -416,31 +535,68 @@ export class SincronizacionService {
         // Creaciones
         if (tableChanges.created.length > 0) {
           for (const item of tableChanges.created) {
-            const mappedData = this.sanitizeForPrisma(table.name, this.mapClientDataToPrisma(item));
+            const mappedData = this.stripProtectedFields(
+              table.name,
+              this.sanitizeForPrisma(table.name, this.mapClientDataToPrisma(item))
+            );
 
             // Forzar que el registro pertenezca a la organizacion del usuario si el modelo lo tiene
             if (table.hasOrgId) {
               mappedData.organizacionId = organizacionId;
             }
 
+            // clientes.rutaId es FK obligatoria: sin ruta no se puede crear.
+            // Se omite el registro (en vez de abortar toda la transacción) para
+            // que un único registro heredado inválido no bloquee el resto.
+            if (table.name === 'clientes' && !mappedData.rutaId) {
+              logger.warn(
+                `⚠️  [SYNC PUSH] Cliente ${mappedData.id} sin rutaId; se omite (ruta obligatoria).`
+              );
+              continue;
+            }
             if (table.name === 'clientes' && mappedData.rutaId) {
               await this.ensureRutaExists(tx, mappedData.rutaId, organizacionId);
             }
 
-            // Realizamos upsert para evitar errores de duplicidad si por alguna razón la petición falló a medio camino previamente
             const { id, ...dataWithoutId } = mappedData;
-            await modelTx.upsert({
-              where: { id },
-              update: dataWithoutId,
-              create: mappedData,
-            });
+
+            // Si el id ya existe, solo se sobrescribe cuando pertenece a la
+            // organización del usuario; un id ajeno se ignora (no cross-tenant).
+            const yaExiste = await modelTx.findUnique({ where: { id }, select: { id: true } });
+            if (yaExiste) {
+              const propio = await modelTx.findFirst({
+                where: { id, ...orgScope },
+                select: { id: true },
+              });
+              if (!propio) {
+                logger.warn(
+                  `⚠️  [SYNC PUSH] Se ignoró la creación de ${table.name} ${id}: el id pertenece a otra organización.`
+                );
+                continue;
+              }
+              await modelTx.update({ where: { id }, data: dataWithoutId });
+              continue;
+            }
+
+            // Registro nuevo: validar que el padre (cliente/prestamo/caja) sea de la org.
+            const padreValido = await this.validateParentInOrg(tx, table.name, mappedData, organizacionId);
+            if (!padreValido) {
+              logger.warn(
+                `⚠️  [SYNC PUSH] Se ignoró la creación de ${table.name} ${id}: FK padre inexistente o de otra organización.`
+              );
+              continue;
+            }
+            await modelTx.create({ data: mappedData });
           }
         }
 
         // Actualizaciones
         if (tableChanges.updated.length > 0) {
           for (const item of tableChanges.updated) {
-            const mappedData = this.sanitizeForPrisma(table.name, this.mapClientDataToPrisma(item));
+            const mappedData = this.stripProtectedFields(
+              table.name,
+              this.sanitizeForPrisma(table.name, this.mapClientDataToPrisma(item))
+            );
 
             if (table.name === 'clientes' && mappedData.rutaId) {
               await this.ensureRutaExists(tx, mappedData.rutaId, organizacionId);
@@ -448,10 +604,21 @@ export class SincronizacionService {
 
             const { id, ...dataWithoutId } = mappedData;
 
-            await modelTx.update({
-              where: { id },
-              data: dataWithoutId,
+            // Solo se actualiza si el registro pertenece a la organización del
+            // usuario. Si no existe o es de otra org, se omite (esto también
+            // resuelve la idempotencia: un `update` sobre un id inexistente ya
+            // no lanza P2025 abortando toda la transacción).
+            const propio = await modelTx.findFirst({
+              where: { id, ...orgScope },
+              select: { id: true },
             });
+            if (!propio) {
+              logger.warn(
+                `⚠️  [SYNC PUSH] Se ignoró la actualización de ${table.name} ${id}: inexistente o de otra organización.`
+              );
+              continue;
+            }
+            await modelTx.update({ where: { id }, data: dataWithoutId });
           }
         }
       }

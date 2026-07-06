@@ -14,7 +14,7 @@ export const authMiddleware = (req: Request, _res: Response, next: NextFunction)
   const token = authHeader.split(' ')[1];
 
   try {
-    const decoded = jwt.verify(token, env.JWT_SECRET) as UserPayload;
+    const decoded = jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'] }) as UserPayload;
     req.user = decoded;
     next();
   } catch (error) {

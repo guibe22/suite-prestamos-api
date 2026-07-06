@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { AuthController } from './auth.controller.js';
 import { validate } from '../../middlewares/validate.middleware.js';
-import { loginSchema, registerSchema, refreshSchema, sendCodeSchema, changePasswordSchema } from './auth.schema.js';
+import { loginSchema, registerSchema, refreshSchema, sendCodeSchema, changePasswordSchema, configureOrganizationSchema } from './auth.schema.js';
 import { authMiddleware } from '../../middlewares/auth.middleware.js';
+import { checkRole } from '../../middlewares/permissions.middleware.js';
 
 const router = Router();
 const controller = new AuthController();
@@ -95,7 +96,13 @@ router.post('/refresh', validate({ body: refreshSchema }), controller.refresh);
  *         description: Retorna el perfil del usuario
  */
 router.get('/profile', authMiddleware, controller.profile);
-router.post('/configure-organization', authMiddleware, controller.configureOrganization);
+router.post(
+  '/configure-organization',
+  authMiddleware,
+  checkRole(['ADMIN', 'SUPER_ADMIN']),
+  validate({ body: configureOrganizationSchema }),
+  controller.configureOrganization
+);
 
 /**
  * @swagger
