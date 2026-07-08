@@ -40,3 +40,10 @@ export const configureOrganizationSchema = z.object({
     )
     .optional(),
 });
+
+export const resetPasswordSchema = z.object({
+  email: z.string().email('El correo electrónico no es válido.'),
+  code: z.string().length(6, 'El código de verificación debe tener 6 dígitos.'),
+  password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres.'),
+});
+

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { AuthController } from './auth.controller.js';
 import { validate } from '../../middlewares/validate.middleware.js';
-import { loginSchema, registerSchema, refreshSchema, sendCodeSchema, changePasswordSchema, configureOrganizationSchema } from './auth.schema.js';
+import { loginSchema, registerSchema, refreshSchema, sendCodeSchema, changePasswordSchema, configureOrganizationSchema, resetPasswordSchema } from './auth.schema.js';
 import { authMiddleware } from '../../middlewares/auth.middleware.js';
 import { checkRole } from '../../middlewares/permissions.middleware.js';
 
@@ -36,6 +36,8 @@ const controller = new AuthController();
  */
 router.post('/send-code', validate({ body: sendCodeSchema }), controller.sendCode);
 router.post('/register', validate({ body: registerSchema }), controller.register);
+router.post('/forgot-password', validate({ body: sendCodeSchema }), controller.forgotPassword);
+router.post('/reset-password', validate({ body: resetPasswordSchema }), controller.resetPassword);
 
 /**
  * @swagger

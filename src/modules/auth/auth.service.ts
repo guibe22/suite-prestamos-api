@@ -13,6 +13,7 @@ import {
 import type { LoginInput, RegisterInput, UserSessionResponse } from './auth.types.js';
 
 const verificationCodes = new Map<string, { code: string; expiresAt: number }>();
+const recoveryCodes = new Map<string, { code: string; expiresAt: number }>();
 
 export class AuthService {
   private authRepository = new AuthRepository();
@@ -125,6 +126,105 @@ export class AuthService {
       console.error('Fallo al enviar correo con Resend:', error);
       throw new Error(`No se pudo enviar el correo de verificación: ${error.message}`);
     }
+  }
+
+  async sendForgotPasswordCode(email: string): Promise<void> {
+    const cleanEmail = email.trim().toLowerCase();
+
+    // 1. Validar que el correo esté registrado
+    const existingUser = await this.authRepository.findByEmail(cleanEmail);
+    if (!existingUser) {
+      throw new BadRequestError('El correo electrónico no está registrado.');
+    }
+
+    // 2. Generar código de 6 dígitos
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Expiración en 10 minutos
+    const expiresAt = Date.now() + 10 * 60 * 1000;
+    recoveryCodes.set(cleanEmail, { code, expiresAt });
+
+    // 3. Enviar correo usando la API de Resend
+    const apiKey = env.RESEND_API_KEY;
+    if (!apiKey) {
+      if (env.NODE_ENV !== 'production') {
+        logger.warn(`⚠️  RESEND_API_KEY no configurada.`);
+        logger.warn(`🔑 [SOLO DESARROLLO] Código de recuperación de contraseña para ${cleanEmail}: ${code}`);
+        return;
+      }
+      throw new Error('El servicio de correo no está configurado (RESEND_API_KEY).');
+    }
+
+    try {
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          from: env.RESEND_FROM,
+          to: cleanEmail,
+          subject: `${code} es tu código de recuperación de contraseña de Suite Préstamos`,
+          html: `
+            <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px; border: 1px solid #f0f0f0; border-radius: 16px; background-color: #ffffff;">
+              <h2 style="color: #ef4444; font-size: 22px; margin-bottom: 8px;">Recuperación de contraseña</h2>
+              <p style="color: #4b5563; font-size: 15px; line-height: 24px;">Has solicitado restablecer la contraseña de tu cuenta en <strong>Suite Préstamos</strong>. Ingresa el siguiente código de verificación en la aplicación:</p>
+              <div style="background-color: #fef2f2; border: 1px solid #fca5a5; border-radius: 12px; padding: 16px; text-align: center; margin: 24px 0;">
+                <span style="font-size: 32px; font-weight: 700; letter-spacing: 6px; color: #ef4444; font-family: monospace;">${code}</span>
+              </div>
+              <p style="color: #6b7280; font-size: 13px; line-height: 20px;">Este código es temporal y vencerá en <strong>10 minutos</strong>. Si no solicitaste este cambio, puedes ignorar este correo de forma segura y tu contraseña actual no sufrirá cambios.</p>
+              <hr style="border: none; border-top: 1px solid #f3f4f6; margin: 24px 0;" />
+              <p style="color: #9ca3af; font-size: 11px; text-align: center;">© ${new Date().getFullYear()} Suite Préstamos. Todos los derechos reservados.</p>
+            </div>
+          `,
+        }),
+      });
+
+      if (!response.ok) {
+        const errJson = (await response.json().catch(() => ({}))) as any;
+        console.error('Error de la API de Resend:', errJson);
+        throw new Error(errJson.message || `Error del servidor de correos (${response.status})`);
+      }
+    } catch (error: any) {
+      if (env.NODE_ENV !== 'production') {
+        logger.warn(`⚠️  No se pudo enviar el correo a ${cleanEmail}: ${error.message}`);
+        logger.warn(`🔑 [SOLO DESARROLLO] Código de recuperación de contraseña para ${cleanEmail}: ${code}`);
+        return;
+      }
+      console.error('Fallo al enviar correo con Resend:', error);
+      throw new Error(`No se pudo enviar el correo de recuperación: ${error.message}`);
+    }
+  }
+
+  async resetPassword(data: any): Promise<void> {
+    const cleanEmail = data.email.trim().toLowerCase();
+
+    // 1. Validar el código de recuperación
+    const recovery = recoveryCodes.get(cleanEmail);
+    if (!recovery) {
+      throw new BadRequestError('No se ha solicitado ningún código de recuperación para este correo.');
+    }
+
+    if (Date.now() > recovery.expiresAt) {
+      recoveryCodes.delete(cleanEmail);
+      throw new BadRequestError('El código de recuperación ha expirado. Solicita uno nuevo.');
+    }
+
+    if (recovery.code !== data.code) {
+      throw new BadRequestError('El código de recuperación ingresado es incorrecto.');
+    }
+
+    // Código válido: eliminar de la caché
+    recoveryCodes.delete(cleanEmail);
+
+    const user = await this.authRepository.findByEmail(cleanEmail);
+    if (!user) {
+      throw new BadRequestError('El usuario no existe.');
+    }
+
+    const passwordHash = await hashPassword(data.password);
+    await this.authRepository.updatePassword(user.id, passwordHash);
   }
 
   async register(data: RegisterInput): Promise<UserSessionResponse> {

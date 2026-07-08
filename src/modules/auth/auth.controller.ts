@@ -82,4 +82,22 @@ export class AuthController {
       next(error);
     }
   };
+
+  forgotPassword = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      await this.authService.sendForgotPasswordCode(req.body.email);
+      sendSuccess(res, 'Código de recuperación de contraseña enviado con éxito.');
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  resetPassword = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      await this.authService.resetPassword(req.body);
+      sendSuccess(res, 'Contraseña restablecida con éxito.');
+    } catch (error) {
+      next(error);
+    }
+  };
 }
