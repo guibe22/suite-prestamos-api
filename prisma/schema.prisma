@@ -363,16 +363,19 @@ model MovimientoCaja {
 }
 
 model Gasto {
-  id          String   @id @default(uuid())
-  cajaId      String
-  caja        Caja     @relation(fields: [cajaId], references: [id])
-  monto       Decimal  @db.Decimal(12, 2)
-  descripcion String
-  fechaGasto  DateTime @default(now())
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  deletedAt   DateTime?
-  deletedBy   String?
+  id              String           @id @default(uuid())
+  cajaId          String
+  caja            Caja             @relation(fields: [cajaId], references: [id])
+  jornadaId       String?
+  jornada         JornadaCobranza? @relation(fields: [jornadaId], references: [id], onDelete: SetNull)
+  categoria       String?
+  monto           Decimal          @db.Decimal(12, 2)
+  descripcion     String
+  fechaGasto      DateTime         @default(now())
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  deletedAt       DateTime?
+  deletedBy       String?
 }
 
 model Auditoria {
@@ -421,6 +424,8 @@ model JornadaCobranza {
   updatedAt       DateTime @updatedAt
   deletedAt       DateTime?
   deletedBy       String?
+
+  detallesGastos  Gasto[]
 
   @@map("jornadas_cobranza")
 }
