@@ -111,6 +111,26 @@ router.post('/:id/restablecer-password', validate({ params: idParamSchema }), co
 
 /**
  * @swagger
+ * /usuario/{id}/reenviar-invitacion:
+ *   post:
+ *     summary: Reenviar el correo de invitación (regenera el código) mientras siga pendiente
+ *     tags: [Usuario]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Invitación reenviada con éxito
+ */
+router.post('/:id/reenviar-invitacion', validate({ params: idParamSchema }), controller.reenviarInvitacion);
+
+/**
+ * @swagger
  * /usuario/{id}:
  *   delete:
  *     summary: Eliminar definitivamente a un miembro del equipo

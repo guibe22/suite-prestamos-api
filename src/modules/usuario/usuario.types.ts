@@ -11,9 +11,6 @@ export interface MiembroEquipoResponse {
   email: string;
   rol: string;
   activo: boolean;
+  invitacionPendiente: boolean;
   createdAt: Date;
-}
-
-export interface MiembroEquipoCreadoResponse extends MiembroEquipoResponse {
-  passwordTemporal?: string;
 }

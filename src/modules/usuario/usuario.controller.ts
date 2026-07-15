@@ -55,6 +55,16 @@ export class UsuarioController {
     }
   };
 
+  reenviarInvitacion = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const organizacionId = this.organizacionDelActor(req);
+      const resultado = await this.usuarioService.reenviarInvitacion(organizacionId, req.params.id);
+      sendSuccess(res, 'Invitación reenviada con éxito.', resultado);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   eliminar = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const organizacionId = this.organizacionDelActor(req);

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { AuthController } from './auth.controller.js';
 import { validate } from '../../middlewares/validate.middleware.js';
-import { loginSchema, registerSchema, refreshSchema, sendCodeSchema, changePasswordSchema, configureOrganizationSchema, resetPasswordSchema } from './auth.schema.js';
+import { loginSchema, registerSchema, refreshSchema, sendCodeSchema, changePasswordSchema, configureOrganizationSchema, resetPasswordSchema, aceptarInvitacionSchema } from './auth.schema.js';
 import { authMiddleware } from '../../middlewares/auth.middleware.js';
 import { checkRole } from '../../middlewares/permissions.middleware.js';
 
@@ -38,6 +38,32 @@ router.post('/send-code', validate({ body: sendCodeSchema }), controller.sendCod
 router.post('/register', validate({ body: registerSchema }), controller.register);
 router.post('/forgot-password', validate({ body: sendCodeSchema }), controller.forgotPassword);
 router.post('/reset-password', validate({ body: resetPasswordSchema }), controller.resetPassword);
+
+/**
+ * @swagger
+ * /auth/aceptar-invitacion:
+ *   post:
+ *     summary: Aceptar una invitación al equipo y fijar la contraseña propia
+ *     tags: [Autenticación]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email, token, password]
+ *             properties:
+ *               email:
+ *                 type: string
+ *               token:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Invitación aceptada, se retornan tokens de sesión
+ */
+router.post('/aceptar-invitacion', validate({ body: aceptarInvitacionSchema }), controller.aceptarInvitacion);
 
 /**
  * @swagger

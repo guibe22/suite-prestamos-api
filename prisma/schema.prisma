@@ -104,7 +104,9 @@ model Usuario {
   id             String       @id @default(uuid())
   nombre         String
   email          String       @unique
-  password       String
+  // Nulo mientras la invitación no ha sido aceptada: el miembro invitado
+  // define su propia contraseña al aceptar, el ADMIN nunca la fija.
+  password       String?
   rolId          String
   rol            Rol          @relation(fields: [rolId], references: [id])
   organizacionId String?
@@ -115,6 +117,14 @@ model Usuario {
   updatedAt      DateTime     @updatedAt
   deletedAt      DateTime?
   deletedBy      String?
+
+  // Invitación al equipo: mientras invitacionAceptadaEn sea nulo, el usuario
+  // no puede iniciar sesión (no ha confirmado que quiere unirse ni fijado
+  // contraseña). Nulos en todos estos campos = cuenta creada sin invitación
+  // (registro directo del dueño de la organización).
+  invitacionToken      String?   @unique
+  invitacionExpiraEn   DateTime?
+  invitacionAceptadaEn DateTime?
 
   auditorias     Auditoria[]
 }

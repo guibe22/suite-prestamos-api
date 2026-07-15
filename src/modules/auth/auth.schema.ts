@@ -47,3 +47,9 @@ export const resetPasswordSchema = z.object({
   password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres.'),
 });
 
+export const aceptarInvitacionSchema = z.object({
+  email: z.string().email('El correo electrónico no es válido.'),
+  token: z.string().min(1, 'El código de invitación es requerido.'),
+  password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres.'),
+});
+

@@ -33,9 +33,24 @@ export class UsuarioRepository {
     });
   }
 
-  async create(data: { nombre: string; email: string; password: string; rolId: string; organizacionId: string }) {
+  async create(data: {
+    nombre: string;
+    email: string;
+    rolId: string;
+    organizacionId: string;
+    invitacionToken: string;
+    invitacionExpiraEn: Date;
+  }) {
     return prisma.usuario.create({
       data,
+      include: { rol: true },
+    });
+  }
+
+  async regenerarInvitacion(id: string, invitacionToken: string, invitacionExpiraEn: Date) {
+    return prisma.usuario.update({
+      where: { id },
+      data: { invitacionToken, invitacionExpiraEn },
       include: { rol: true },
     });
   }

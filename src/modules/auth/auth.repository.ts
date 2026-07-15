@@ -29,6 +29,26 @@ export class AuthRepository {
     });
   }
 
+  async findByInvitacionToken(token: string) {
+    return prisma.usuario.findUnique({
+      where: { invitacionToken: token },
+      include: { rol: true, organizacion: true },
+    });
+  }
+
+  async aceptarInvitacion(id: string, passwordHash: string) {
+    return prisma.usuario.update({
+      where: { id },
+      data: {
+        password: passwordHash,
+        invitacionToken: null,
+        invitacionExpiraEn: null,
+        invitacionAceptadaEn: new Date(),
+      },
+      include: { rol: true, organizacion: true },
+    });
+  }
+
   async findRoleByName(nombre: string) {
     return prisma.rol.findUnique({
       where: { nombre },

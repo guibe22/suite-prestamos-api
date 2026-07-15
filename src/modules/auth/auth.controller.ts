@@ -100,4 +100,13 @@ export class AuthController {
       next(error);
     }
   };
+
+  aceptarInvitacion = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const result = await this.authService.aceptarInvitacion(req.body.email, req.body.token, req.body.password);
+      sendSuccess(res, 'Invitación aceptada con éxito.', result);
+    } catch (error) {
+      next(error);
+    }
+  };
 }
