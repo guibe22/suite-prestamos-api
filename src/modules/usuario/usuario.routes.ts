@@ -89,4 +89,44 @@ router.post('/', validate({ body: crearUsuarioSchema }), controller.crear);
  */
 router.patch('/:id', validate({ params: idParamSchema, body: actualizarUsuarioSchema }), controller.actualizar);
 
+/**
+ * @swagger
+ * /usuario/{id}/restablecer-password:
+ *   post:
+ *     summary: Restablecer la contraseña de un miembro del equipo (se genera una temporal)
+ *     tags: [Usuario]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Contraseña restablecida con éxito
+ */
+router.post('/:id/restablecer-password', validate({ params: idParamSchema }), controller.restablecerPassword);
+
+/**
+ * @swagger
+ * /usuario/{id}:
+ *   delete:
+ *     summary: Eliminar definitivamente a un miembro del equipo
+ *     tags: [Usuario]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Miembro eliminado con éxito
+ */
+router.delete('/:id', validate({ params: idParamSchema }), controller.eliminar);
+
 export default router;

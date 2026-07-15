@@ -55,13 +55,7 @@ export class UsuarioService {
       throw new BadRequestError('Debes enviar al menos un campo para actualizar.');
     }
 
-    const usuario = await this.usuarioRepository.findByIdInOrganizacion(id, organizacionId);
-    if (!usuario) {
-      throw new NotFoundError('El miembro del equipo no existe en tu organización.');
-    }
-    if (!ROLES_ADMINISTRABLES.includes(usuario.rol.nombre)) {
-      throw new ForbiddenError('No puedes administrar este usuario desde aquí.');
-    }
+    const usuario = await this.buscarMiembroAdministrable(organizacionId, id);
 
     const cambios: { nombre?: string; rolId?: string; deletedAt?: Date | null; deletedBy?: string | null } = {};
 
@@ -81,6 +75,32 @@ export class UsuarioService {
 
     const actualizado = await this.usuarioRepository.update(id, cambios);
     return this.toResponse(actualizado);
+  }
+
+  async restablecerPassword(organizacionId: string, id: string): Promise<{ passwordTemporal: string }> {
+    const usuario = await this.buscarMiembroAdministrable(organizacionId, id);
+
+    const passwordTemporal = randomBytes(9).toString('base64url');
+    const passwordHash = await hashPassword(passwordTemporal);
+    await this.usuarioRepository.updatePassword(usuario.id, passwordHash);
+
+    return { passwordTemporal };
+  }
+
+  async eliminar(organizacionId: string, id: string): Promise<void> {
+    const usuario = await this.buscarMiembroAdministrable(organizacionId, id);
+    await this.usuarioRepository.hardDelete(usuario.id);
+  }
+
+  private async buscarMiembroAdministrable(organizacionId: string, id: string) {
+    const usuario = await this.usuarioRepository.findByIdInOrganizacion(id, organizacionId);
+    if (!usuario) {
+      throw new NotFoundError('El miembro del equipo no existe en tu organización.');
+    }
+    if (!ROLES_ADMINISTRABLES.includes(usuario.rol.nombre)) {
+      throw new ForbiddenError('No puedes administrar este usuario desde aquí.');
+    }
+    return usuario;
   }
 
   private async buscarOCrearRol(nombre: string) {

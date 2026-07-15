@@ -47,4 +47,16 @@ export class UsuarioRepository {
       include: { rol: true },
     });
   }
+
+  async updatePassword(id: string, passwordHash: string) {
+    return prisma.usuario.update({
+      where: { id },
+      data: { password: passwordHash },
+      include: { rol: true },
+    });
+  }
+
+  async hardDelete(id: string) {
+    return prisma.usuario.delete({ where: { id } });
+  }
 }

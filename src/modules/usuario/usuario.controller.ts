@@ -44,4 +44,24 @@ export class UsuarioController {
       next(error);
     }
   };
+
+  restablecerPassword = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const organizacionId = this.organizacionDelActor(req);
+      const resultado = await this.usuarioService.restablecerPassword(organizacionId, req.params.id);
+      sendSuccess(res, 'Contraseña restablecida con éxito.', resultado);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  eliminar = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const organizacionId = this.organizacionDelActor(req);
+      await this.usuarioService.eliminar(organizacionId, req.params.id);
+      sendSuccess(res, 'Miembro del equipo eliminado con éxito.');
+    } catch (error) {
+      next(error);
+    }
+  };
 }
