@@ -175,6 +175,40 @@ export class SincronizacionService {
   }
 
   /**
+   * Igual que `orgScopeWhere`, pero devuelve el `where` COMPLETO (organización +
+   * alcance de rol) en un único objeto por tabla — no se combina por spread con
+   * `orgScopeWhere` porque varias tablas anidan la condición bajo la misma clave
+   * (`cliente`, `prestamo`) y un merge superficial pisaría la mitad de la condición.
+   * Restringe la escritura de un COBRADOR a su(s) ruta(s) asignada(s) vía
+   * `Ruta.responsableId` y a sus propias jornadas, para que no pueda editar/borrar
+   * registros de otra ruta empujando un `push` manual. Para cualquier otro rol,
+   * es idéntico a `orgScopeWhere`.
+   */
+  private scopeWhere(tableName: string, organizacionId: string, actorId: string, actorRol: string): any {
+    if (actorRol !== 'COBRADOR') return this.orgScopeWhere(tableName, organizacionId);
+    switch (tableName) {
+      case 'rutas':
+        return { organizacionId, responsableId: actorId };
+      case 'clientes':
+        return { organizacionId, ruta: { responsableId: actorId } };
+      case 'prestamos':
+        return { cliente: { organizacionId, ruta: { responsableId: actorId } } };
+      case 'cuotas':
+      case 'pagos':
+        return { prestamo: { cliente: { organizacionId, ruta: { responsableId: actorId } } } };
+      case 'jornadas_cobranza':
+        return { organizacionId, usuarioId: actorId };
+      case 'cajas':
+        return { organizacionId, estado: 'ABIERTA' };
+      case 'gastos':
+      case 'movimientos_cajas':
+        return { caja: { organizacionId, estado: 'ABIERTA' } };
+      default:
+        return this.orgScopeWhere(tableName, organizacionId);
+    }
+  }
+
+  /**
    * Verifica que el registro padre referenciado por una FK pertenezca a la
    * organización del usuario, antes de crear un hijo (préstamo/cuota/pago/gasto/
    * movimiento). Evita colgar registros de clientes/cajas de otra organización.
@@ -183,13 +217,25 @@ export class SincronizacionService {
     tx: any,
     tableName: string,
     data: any,
-    organizacionId: string
+    organizacionId: string,
+    actorId: string,
+    actorRol: string
   ): Promise<boolean> {
+    const esCobrador = actorRol === 'COBRADOR';
     switch (tableName) {
+      case 'clientes': {
+        if (!esCobrador) return true;
+        if (!data.rutaId) return false;
+        const ruta = await tx.ruta.findFirst({
+          where: { id: data.rutaId, organizacionId, responsableId: actorId },
+          select: { id: true },
+        });
+        return !!ruta;
+      }
       case 'prestamos': {
         if (!data.clienteId) return false;
         const c = await tx.cliente.findFirst({
-          where: { id: data.clienteId, organizacionId },
+          where: { id: data.clienteId, organizacionId, ...(esCobrador ? { ruta: { responsableId: actorId } } : {}) },
           select: { id: true },
         });
         return !!c;
@@ -198,7 +244,10 @@ export class SincronizacionService {
       case 'pagos': {
         if (!data.prestamoId) return false;
         const p = await tx.prestamo.findFirst({
-          where: { id: data.prestamoId, cliente: { organizacionId } },
+          where: {
+            id: data.prestamoId,
+            cliente: { organizacionId, ...(esCobrador ? { ruta: { responsableId: actorId } } : {}) },
+          },
           select: { id: true },
         });
         return !!p;
@@ -207,10 +256,14 @@ export class SincronizacionService {
       case 'movimientos_cajas': {
         if (!data.cajaId) return false;
         const caja = await tx.caja.findFirst({
-          where: { id: data.cajaId, organizacionId },
+          where: { id: data.cajaId, organizacionId, ...(esCobrador ? { estado: 'ABIERTA' } : {}) },
           select: { id: true },
         });
         return !!caja;
+      }
+      case 'jornadas_cobranza': {
+        if (esCobrador && data.usuarioId && data.usuarioId !== actorId) return false;
+        return true;
       }
       default:
         // Tablas con organizacionId directo: el propio push fuerza el org.
@@ -224,7 +277,7 @@ export class SincronizacionService {
    * credenciales y el rol para impedir escalada de privilegios (un cobrador
    * pusheando `rolId=ADMIN` o un `password` conocido).
    */
-  private stripProtectedFields(tableName: string, data: any): any {
+  private stripProtectedFields(tableName: string, data: any, actorRol: string): any {
     delete data.organizacionId;
     delete data.cuentaId;
     if (tableName === 'usuarios') {
@@ -232,18 +285,27 @@ export class SincronizacionService {
       delete data.rolId;
       delete data.email;
     }
+    // Reasignar quién es el responsable de una ruta es una decisión administrativa;
+    // un COBRADOR/CAJERO no debe poder auto-asignarse (o quitarle) una ruta vía sync.
+    if (tableName === 'rutas' && actorRol !== 'ADMIN' && actorRol !== 'SUPER_ADMIN') {
+      delete data.responsableId;
+    }
     return data;
   }
 
   /**
-   * Pull: Retorna los cambios del servidor ocurridos desde lastPulledAt para la organizacion dada
+   * Pull: Retorna los cambios del servidor ocurridos desde lastPulledAt para la organizacion dada.
+   * Un COBRADOR solo recibe sus propias rutas asignadas (Ruta.responsableId) y todo lo que cuelga
+   * de ellas (clientes/préstamos/cuotas/pagos), sus propias jornadas, y solo cajas ABIERTAS (para
+   * poder seguir registrando gastos del día). ADMIN/SUPER_ADMIN/CAJERO reciben toda la organización.
    */
-  async pull(lastPulledAt: number, organizacionId: string): Promise<PullResponse> {
+  async pull(lastPulledAt: number, organizacionId: string, actorId: string, actorRol: string): Promise<PullResponse> {
     const serverTimestamp = Date.now();
     const lastPulledDate = lastPulledAt > 0 ? new Date(lastPulledAt) : null;
+    const esCobrador = actorRol === 'COBRADOR';
 
     logger.info(
-      `📥 [SYNC PULL] Inicio | org=${organizacionId} | ${
+      `📥 [SYNC PULL] Inicio | org=${organizacionId} | actor=${actorId} (${actorRol}) | ${
         lastPulledDate
           ? `cambios desde ${lastPulledDate.toISOString()}`
           : 'PRIMERA sincronización (envía TODO)'
@@ -271,7 +333,7 @@ export class SincronizacionService {
         // Nunca se envía el hash de la contraseña a los dispositivos.
         omit: { password: true },
         whereClause: (date: Date | null) => ({
-          organizacionId,
+          ...(esCobrador ? { id: actorId } : { organizacionId }),
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -280,6 +342,7 @@ export class SincronizacionService {
         model: prisma.cliente,
         whereClause: (date: Date | null) => ({
           organizacionId,
+          ...(esCobrador ? { ruta: { responsableId: actorId } } : {}),
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -287,7 +350,7 @@ export class SincronizacionService {
         name: 'prestamos',
         model: prisma.prestamo,
         whereClause: (date: Date | null) => ({
-          cliente: { organizacionId },
+          cliente: { organizacionId, ...(esCobrador ? { ruta: { responsableId: actorId } } : {}) },
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -295,7 +358,9 @@ export class SincronizacionService {
         name: 'cuotas',
         model: prisma.cuota,
         whereClause: (date: Date | null) => ({
-          prestamo: { cliente: { organizacionId } },
+          prestamo: {
+            cliente: { organizacionId, ...(esCobrador ? { ruta: { responsableId: actorId } } : {}) },
+          },
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -303,7 +368,9 @@ export class SincronizacionService {
         name: 'pagos',
         model: prisma.pago,
         whereClause: (date: Date | null) => ({
-          prestamo: { cliente: { organizacionId } },
+          prestamo: {
+            cliente: { organizacionId, ...(esCobrador ? { ruta: { responsableId: actorId } } : {}) },
+          },
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -312,6 +379,7 @@ export class SincronizacionService {
         model: prisma.caja,
         whereClause: (date: Date | null) => ({
           organizacionId,
+          ...(esCobrador ? { estado: 'ABIERTA' } : {}),
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -319,7 +387,7 @@ export class SincronizacionService {
         name: 'gastos',
         model: prisma.gasto,
         whereClause: (date: Date | null) => ({
-          caja: { organizacionId },
+          caja: { organizacionId, ...(esCobrador ? { estado: 'ABIERTA' } : {}) },
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -328,6 +396,7 @@ export class SincronizacionService {
         model: prisma.ruta,
         whereClause: (date: Date | null) => ({
           organizacionId,
+          ...(esCobrador ? { responsableId: actorId } : {}),
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -335,7 +404,7 @@ export class SincronizacionService {
         name: 'movimientos_cajas',
         model: prisma.movimientoCaja,
         whereClause: (date: Date | null) => ({
-          caja: { organizacionId },
+          caja: { organizacionId, ...(esCobrador ? { estado: 'ABIERTA' } : {}) },
           ...(date ? { createdAt: { gt: date } } : {}),
         }),
       },
@@ -344,6 +413,7 @@ export class SincronizacionService {
         model: prisma.jornadaCobranza,
         whereClause: (date: Date | null) => ({
           organizacionId,
+          ...(esCobrador ? { usuarioId: actorId } : {}),
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -410,7 +480,7 @@ export class SincronizacionService {
   /**
    * Push: Aplica los cambios enviados por el cliente al servidor en una sola transaccion
    */
-  async push(changes: WatermelonChanges, organizacionId: string, userId: string): Promise<void> {
+  async push(changes: WatermelonChanges, organizacionId: string, userId: string, userRol: string): Promise<void> {
     // Resumen de lo que el cliente quiere subir, ANTES de aplicarlo
     let entrantesCreated = 0;
     let entrantesUpdated = 0;
@@ -467,10 +537,11 @@ export class SincronizacionService {
         if (tableChanges && tableChanges.deleted.length > 0) {
           const idsToDelete = tableChanges.deleted;
           const modelTx = (tx as any)[this.getModelName(table.name)];
-          // El `where` se restringe a la organización del usuario: un id de otra
-          // organización simplemente no coincide (0 filas afectadas), en vez de
-          // permitir un borrado cross-tenant.
-          const orgScope = this.orgScopeWhere(table.name, organizacionId);
+          // El `where` se restringe a la organización (y, si es COBRADOR, a su
+          // ruta asignada): un id fuera de ese alcance simplemente no coincide
+          // (0 filas afectadas), en vez de permitir un borrado cross-tenant o
+          // cross-ruta.
+          const orgScope = this.scopeWhere(table.name, organizacionId, userId, userRol);
 
           // Borrado lógico actualizando el campo deletedAt (excepto movimientoCaja que no tiene)
           if (table.name === 'movimientos_cajas') {
@@ -508,7 +579,7 @@ export class SincronizacionService {
 
         const modelName = this.getModelName(table.name);
         const modelTx = (tx as any)[modelName];
-        const orgScope = this.orgScopeWhere(table.name, organizacionId);
+        const orgScope = this.scopeWhere(table.name, organizacionId, userId, userRol);
 
         // La organización nunca se crea desde el cliente: ya existe en el servidor
         // (se crea en el registro) y el registro local puede traer un id distinto.
@@ -537,7 +608,8 @@ export class SincronizacionService {
           for (const item of tableChanges.created) {
             const mappedData = this.stripProtectedFields(
               table.name,
-              this.sanitizeForPrisma(table.name, this.mapClientDataToPrisma(item))
+              this.sanitizeForPrisma(table.name, this.mapClientDataToPrisma(item)),
+              userRol
             );
 
             // Forzar que el registro pertenezca a la organizacion del usuario si el modelo lo tiene
@@ -578,8 +650,9 @@ export class SincronizacionService {
               continue;
             }
 
-            // Registro nuevo: validar que el padre (cliente/prestamo/caja) sea de la org.
-            const padreValido = await this.validateParentInOrg(tx, table.name, mappedData, organizacionId);
+            // Registro nuevo: validar que el padre (cliente/prestamo/caja) sea de la org
+            // y, si es COBRADOR, que además sea de su ruta asignada.
+            const padreValido = await this.validateParentInOrg(tx, table.name, mappedData, organizacionId, userId, userRol);
             if (!padreValido) {
               logger.warn(
                 `⚠️  [SYNC PUSH] Se ignoró la creación de ${table.name} ${id}: FK padre inexistente o de otra organización.`
@@ -595,7 +668,8 @@ export class SincronizacionService {
           for (const item of tableChanges.updated) {
             const mappedData = this.stripProtectedFields(
               table.name,
-              this.sanitizeForPrisma(table.name, this.mapClientDataToPrisma(item))
+              this.sanitizeForPrisma(table.name, this.mapClientDataToPrisma(item)),
+              userRol
             );
 
             if (table.name === 'clientes' && mappedData.rutaId) {

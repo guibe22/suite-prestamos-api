@@ -8,7 +8,9 @@ export class SincronizacionController {
   pull = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const organizacionId = req.user?.organizacionId;
-      if (!organizacionId) {
+      const actorId = req.user?.id;
+      const actorRol = req.user?.rol;
+      if (!organizacionId || !actorId || !actorRol) {
         throw new BadRequestError('El usuario debe pertenecer a una organización para sincronizar.');
       }
 
@@ -20,7 +22,7 @@ export class SincronizacionController {
         throw new BadRequestError('El parámetro last_pulled_at debe ser un número válido.');
       }
 
-      const result = await this.sincronizacionService.pull(lastPulledAt, organizacionId);
+      const result = await this.sincronizacionService.pull(lastPulledAt, organizacionId, actorId, actorRol);
       
       // Retornar formato nativo que espera WatermelonDB
       res.status(200).json(result);
@@ -33,8 +35,9 @@ export class SincronizacionController {
     try {
       const organizacionId = req.user?.organizacionId;
       const userId = req.user?.id;
+      const userRol = req.user?.rol;
 
-      if (!organizacionId || !userId) {
+      if (!organizacionId || !userId || !userRol) {
         throw new BadRequestError('Usuario no autenticado o sin organización asociada.');
       }
 
@@ -43,7 +46,7 @@ export class SincronizacionController {
         throw new BadRequestError('No se proporcionaron cambios para sincronizar.');
       }
 
-      await this.sincronizacionService.push(changes, organizacionId, userId);
+      await this.sincronizacionService.push(changes, organizacionId, userId, userRol);
 
       // Responder con estado 200 (sin contenido) o 204 como lo espera WatermelonDB
       res.status(204).send();
