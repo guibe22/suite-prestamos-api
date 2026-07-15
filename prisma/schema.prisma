@@ -334,6 +334,10 @@ model Pago {
   fechaPago  DateTime  @default(now())
   cajaId     String?
   caja       Caja?     @relation(fields: [cajaId], references: [id])
+  // A qué jornada de cobro pertenece este pago (para poder listar/detallar
+  // los ingresos de una jornada concreta, igual que Gasto.jornadaId).
+  jornadaId  String?
+  jornada    JornadaCobranza? @relation(fields: [jornadaId], references: [id], onDelete: SetNull)
   metodoPago String    // EFECTIVO, TRANSFERENCIA, etc.
   referencia String?
   createdAt  DateTime  @default(now())
@@ -442,6 +446,7 @@ model JornadaCobranza {
   deletedBy       String?
 
   detallesGastos  Gasto[]
+  pagos           Pago[]
 
   @@map("jornadas_cobranza")
 }
