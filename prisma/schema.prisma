@@ -114,6 +114,7 @@ model Usuario {
   rutas          Ruta[]
   jornadas       JornadaCobranza[]
   cajas          Caja[]
+  prestamos      Prestamo[]
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   deletedAt      DateTime?
@@ -294,6 +295,11 @@ model Prestamo {
   id               String       @id @default(uuid())
   clienteId        String
   cliente          Cliente      @relation(fields: [clienteId], references: [id])
+  // Cobrador que desembolsó el préstamo. Sin esto, "préstamos entregados hoy"
+  // en el cálculo de caja solo podía filtrarse por fecha y contaminaba el
+  // balance de un cobrador con desembolsos de otros el mismo día.
+  usuarioId        String?
+  usuario          Usuario?     @relation(fields: [usuarioId], references: [id])
   monto            Decimal      @db.Decimal(12, 2)
   tasaInteres      Decimal      @db.Decimal(5, 2) // Porcentaje
   plazo            Int          // Cantidad de cuotas

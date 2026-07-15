@@ -314,6 +314,12 @@ export class SincronizacionService {
     if (tableName === 'cajas') {
       delete data.usuarioId;
     }
+    // Igual que cajas: quién desembolsó el préstamo se fija en el servidor al
+    // crearlo y no se reasigna vía sync, para que el cálculo de caja no se
+    // pueda falsear atribuyendo un préstamo a otro cobrador.
+    if (tableName === 'prestamos') {
+      delete data.usuarioId;
+    }
     return data;
   }
 
@@ -646,6 +652,13 @@ export class SincronizacionService {
               mappedData.usuarioId = userId;
             }
 
+            // El préstamo siempre queda atribuido a quien lo desembolsa (ver
+            // stripProtectedFields), para poder excluirlo del balance de caja
+            // de otros cobradores.
+            if (table.name === 'prestamos') {
+              mappedData.usuarioId = userId;
+            }
+
             // clientes.rutaId es FK obligatoria: sin ruta no se puede crear.
             // Se omite el registro (en vez de abortar toda la transacción) para
             // que un único registro heredado inválido no bloquee el resto.
@@ -690,18 +703,28 @@ export class SincronizacionService {
             }
 
             // Colisión de `codigo` entre dispositivos (conteo local, único por
-            // organización en el servidor): se omite el registro en vez de
-            // dejar que Prisma aborte todo el lote con P2002.
+            // organización en el servidor): antes se omitía el registro para
+            // no dejar que Prisma abortara todo el lote con P2002, pero eso
+            // dejaba al cliente huérfano localmente para siempre (cada push
+            // repetía la misma colisión). En vez de descartarlo, se le agrega
+            // un sufijo desambiguador y se crea de todos modos; el próximo
+            // pull le trae el código corregido al dispositivo.
             if (table.name === 'clientes' && mappedData.codigo) {
-              const codigoEnUso = await modelTx.findFirst({
-                where: { organizacionId, codigo: mappedData.codigo, id: { not: id } },
-                select: { id: true },
-              });
-              if (codigoEnUso) {
+              const codigoOriginal = mappedData.codigo;
+              let intento = 1;
+              while (
+                await modelTx.findFirst({
+                  where: { organizacionId, codigo: mappedData.codigo, id: { not: id } },
+                  select: { id: true },
+                })
+              ) {
+                intento += 1;
+                mappedData.codigo = `${codigoOriginal}-${intento}`;
+              }
+              if (mappedData.codigo !== codigoOriginal) {
                 logger.warn(
-                  `⚠️  [SYNC PUSH] Se ignoró la creación del cliente ${id}: el código '${mappedData.codigo}' ya está en uso por otro cliente de la organización.`
+                  `⚠️  [SYNC PUSH] El código '${codigoOriginal}' del cliente ${id} ya estaba en uso; se le asignó '${mappedData.codigo}' para no perder el registro.`
                 );
-                continue;
               }
             }
 
