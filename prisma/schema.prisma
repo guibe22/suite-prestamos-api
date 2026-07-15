@@ -429,6 +429,12 @@ model JornadaCobranza {
   efectivoCobrado Decimal  @db.Decimal(12, 2) @default(0)
   prestamos       Decimal  @db.Decimal(12, 2) @default(0)
   gastos          Decimal  @db.Decimal(12, 2) @default(0)
+  // Progreso en vivo de la ronda: cuántos clientes de la ruta ya se
+  // atendieron (cobrados, sin cobro o pospuestos) vs. cuántos faltan. Se
+  // actualiza en cada cambio mientras la jornada sigue ABIERTA, para que un
+  // ADMIN/CAJERO pueda monitorear el avance de otros cobradores en tiempo real.
+  clientesVisitados  Int @default(0)
+  clientesPendientes Int @default(0)
   estado          EstadoJornada @default(ABIERTA)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
