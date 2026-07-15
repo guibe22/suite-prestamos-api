@@ -71,7 +71,4 @@ export class UsuarioRepository {
     });
   }
 
-  async hardDelete(id: string) {
-    return prisma.usuario.delete({ where: { id } });
-  }
 }

@@ -10,7 +10,7 @@ import {
   ConflictError,
   UnauthorizedError,
 } from '../../shared/errors/custom.error.js';
-import type { LoginInput, RegisterInput, UserSessionResponse } from './auth.types.js';
+import type { LoginInput, OrganizacionSessionInfo, RegisterInput, UserSessionResponse } from './auth.types.js';
 
 const verificationCodes = new Map<string, { code: string; expiresAt: number }>();
 const recoveryCodes = new Map<string, { code: string; expiresAt: number }>();
@@ -68,7 +68,14 @@ export class AuthService {
     email: string;
     rol: { nombre: string };
     organizacionId: string | null;
-    organizacion: { configuracion: unknown } | null;
+    organizacion: {
+      id: string;
+      nombre: string;
+      identificacionTributaria: string | null;
+      direccion: string | null;
+      telefono: string | null;
+      configuracion: unknown;
+    } | null;
   }): UserSessionResponse {
     const tokenPayload = {
       id: user.id,
@@ -87,10 +94,37 @@ export class AuthService {
       rol: user.rol.nombre,
       organizacionId: user.organizacionId,
       organizacionConfigurada: user.organizacion ? user.organizacion.configuracion !== null : false,
+      organizacion: this.toOrganizacionSessionInfo(user.organizacion),
       tokens: {
         accessToken,
         refreshToken,
       },
+    };
+  }
+
+  /**
+   * Misma forma que devuelve /auth/profile: sin esto, un login normal (sin
+   * pasar por el wizard de onboarding) deja al cliente sin la configuración
+   * financiera de la organización hasta el próximo cold-start.
+   */
+  private toOrganizacionSessionInfo(
+    organizacion: {
+      id: string;
+      nombre: string;
+      identificacionTributaria: string | null;
+      direccion: string | null;
+      telefono: string | null;
+      configuracion: unknown;
+    } | null,
+  ): OrganizacionSessionInfo | null {
+    if (!organizacion) return null;
+    return {
+      id: organizacion.id,
+      nombre: organizacion.nombre,
+      identificacionTributaria: organizacion.identificacionTributaria,
+      direccion: organizacion.direccion,
+      telefono: organizacion.telefono,
+      configuracion: organizacion.configuracion,
     };
   }
 
@@ -230,7 +264,7 @@ export class AuthService {
     }
 
     const passwordHash = await hashPassword(data.password);
-    const { usuario } = await this.authRepository.createUserWithNewOrganization({
+    const { usuario, organizacion } = await this.authRepository.createUserWithNewOrganization({
       ...data,
       passwordHash,
       rolId: rol.id,
@@ -254,6 +288,7 @@ export class AuthService {
       organizacionId: usuario.organizacionId,
       // Una organización recién creada aún no tiene configuración.
       organizacionConfigurada: false,
+      organizacion: this.toOrganizacionSessionInfo(organizacion),
       tokens: {
         accessToken,
         refreshToken,

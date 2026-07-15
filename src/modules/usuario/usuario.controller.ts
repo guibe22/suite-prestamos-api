@@ -68,8 +68,9 @@ export class UsuarioController {
   eliminar = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const organizacionId = this.organizacionDelActor(req);
-      await this.usuarioService.eliminar(organizacionId, req.params.id);
-      sendSuccess(res, 'Miembro del equipo eliminado con éxito.');
+      const actorId = req.user!.id;
+      await this.usuarioService.eliminar(organizacionId, req.params.id, actorId);
+      sendSuccess(res, 'Miembro del equipo desactivado con éxito.');
     } catch (error) {
       next(error);
     }

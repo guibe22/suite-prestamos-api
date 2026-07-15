@@ -133,7 +133,7 @@ router.post('/:id/reenviar-invitacion', validate({ params: idParamSchema }), con
  * @swagger
  * /usuario/{id}:
  *   delete:
- *     summary: Eliminar definitivamente a un miembro del equipo
+ *     summary: Desactivar (borrado lógico) a un miembro del equipo
  *     tags: [Usuario]
  *     security:
  *       - bearerAuth: []

@@ -132,9 +132,15 @@ export class UsuarioService {
     return { passwordTemporal };
   }
 
-  async eliminar(organizacionId: string, id: string): Promise<void> {
+  /**
+   * Borrado lógico (mismo mecanismo que actualizar({activo:false})): un
+   * hard-delete real arrastraría en cascada (onDelete: Cascade) todo el
+   * historial de JornadaCobranza del cobrador, perdiendo el cuadre/auditoría
+   * de jornadas ya cerradas.
+   */
+  async eliminar(organizacionId: string, id: string, actorId: string): Promise<void> {
     const usuario = await this.buscarMiembroAdministrable(organizacionId, id);
-    await this.usuarioRepository.hardDelete(usuario.id);
+    await this.usuarioRepository.update(usuario.id, { deletedAt: new Date(), deletedBy: actorId });
   }
 
   private async buscarMiembroAdministrable(organizacionId: string, id: string) {

@@ -113,6 +113,7 @@ model Usuario {
   organizacion   Organizacion? @relation(fields: [organizacionId], references: [id])
   rutas          Ruta[]
   jornadas       JornadaCobranza[]
+  cajas          Caja[]
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   deletedAt      DateTime?
@@ -296,7 +297,10 @@ model Prestamo {
   monto            Decimal      @db.Decimal(12, 2)
   tasaInteres      Decimal      @db.Decimal(5, 2) // Porcentaje
   plazo            Int          // Cantidad de cuotas
-  estado           String       // PENDIENTE, ACTIVO, PAGADO, VENCIDO, ANULADO
+  // Valores reales que escribe la app móvil: ACTIVO, LIQUIDADO (MOROSO,
+  // VENCIDO, RENOVABLE y ATRASADO son estados VISUALES derivados en el
+  // cliente, nunca persistidos aquí).
+  estado           String       // ACTIVO, LIQUIDADO
   fechaInicio      DateTime
   fechaVencimiento DateTime
   createdAt        DateTime     @default(now())
@@ -319,7 +323,10 @@ model Cuota {
   montoPagado      Decimal  @db.Decimal(12, 2) @default(0)
   fechaVencimiento DateTime
   fechaPago        DateTime?
-  estado           String   // PENDIENTE, PARCIAL, PAGADO, VENCIDO
+  // Valores reales que escribe la app móvil: PENDIENTE, PAGADA (binario; un
+  // abono parcial deja la cuota en PENDIENTE con montoPagado > 0, la app no
+  // usa un estado intermedio).
+  estado           String   // PENDIENTE, PAGADA
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
   deletedAt        DateTime?
@@ -351,6 +358,11 @@ model Caja {
   nombre         String
   organizacionId String
   organizacion   Organizacion @relation(fields: [organizacionId], references: [id])
+  // A qué cobrador pertenece esta caja. Sin esto, dos cobradores con jornada
+  // abierta el mismo día no se pueden distinguir por "caja ABIERTA de mi
+  // organización" y sus cobros/gastos terminan mezclados entre cuadres.
+  usuarioId      String?
+  usuario        Usuario?     @relation(fields: [usuarioId], references: [id])
   montoApertura  Decimal      @db.Decimal(12, 2)
   montoCierre    Decimal?     @db.Decimal(12, 2)
   fechaApertura  DateTime     @default(now())

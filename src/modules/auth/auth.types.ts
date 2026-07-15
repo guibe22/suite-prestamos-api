@@ -9,6 +9,15 @@ export interface TokenResponse {
   refreshToken: string;
 }
 
+export interface OrganizacionSessionInfo {
+  id: string;
+  nombre: string;
+  identificacionTributaria: string | null;
+  direccion: string | null;
+  telefono: string | null;
+  configuracion: unknown;
+}
+
 export interface UserSessionResponse {
   id: string;
   nombre: string;
@@ -16,5 +25,6 @@ export interface UserSessionResponse {
   rol: string;
   organizacionId?: string | null;
   organizacionConfigurada: boolean;
+  organizacion: OrganizacionSessionInfo | null;
   tokens: TokenResponse;
 }

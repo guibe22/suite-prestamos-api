@@ -23,6 +23,26 @@ export class PagoService {
       });
 
       await this.recalcularPrestamo(tx, pago.prestamoId);
+      if (pago.jornadaId) {
+        await this.recalcularEfectivoCobradoJornada(tx, pago.jornadaId);
+      }
+    });
+  }
+
+  /**
+   * JornadaCobranza.efectivoCobrado se escribe desde el cliente al crear el
+   * pago; si el pago se borra después de que la jornada cerró, nadie más
+   * vuelve a tocar ese total. Se recalcula desde cero con los pagos vigentes
+   * de la jornada para que el cuadre no quede inflado para siempre.
+   */
+  private async recalcularEfectivoCobradoJornada(tx: any, jornadaId: string): Promise<void> {
+    const pagosVigentes = await tx.pago.findMany({
+      where: { jornadaId, deletedAt: null },
+    });
+    const efectivoCobrado = pagosVigentes.reduce((sum: number, p: any) => sum + Number(p.monto), 0);
+    await tx.jornadaCobranza.update({
+      where: { id: jornadaId },
+      data: { efectivoCobrado },
     });
   }
 
@@ -71,6 +91,12 @@ export class PagoService {
       }
     }
 
+    // 'PAGADA'/'LIQUIDADO' (no 'PAGADO'/'PARCIAL' del comentario de
+    // schema.prisma): la app móvil es quien realmente escribe y lee estos
+    // valores en todas sus pantallas (filtros, badges, colores) y solo
+    // conoce ese binario PENDIENTE/PAGADA y ACTIVO/LIQUIDADO. Escribir el
+    // valor "documentado" pero no usado por nadie dejaría estos registros
+    // invisibles para la propia app tras sincronizar.
     for (const cuota of cuotasCalculadas) {
       const pagada = cuota.montoTotal - cuota.montoPagado <= 0.05;
       await tx.cuota.update({

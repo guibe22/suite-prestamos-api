@@ -118,6 +118,13 @@ export class SincronizacionService {
       data.direccion = data.direccion ?? '';
       if (!data.codigo) data.codigo = `C-${String(data.id ?? '').slice(-6).toUpperCase()}`;
     }
+    if (tableName === 'jornadas_cobranza') {
+      // Int NOT NULL con default en Prisma; opcionales en WatermelonDB. Un
+      // null explícito rompe el input "unchecked" igual que ya pasaba con
+      // clientes — se coalescen a 0 en vez de abortar el push completo.
+      data.clientesVisitados = data.clientesVisitados ?? 0;
+      data.clientesPendientes = data.clientesPendientes ?? 0;
+    }
     return data;
   }
 
@@ -199,10 +206,10 @@ export class SincronizacionService {
       case 'jornadas_cobranza':
         return { organizacionId, usuarioId: actorId };
       case 'cajas':
-        return { organizacionId, estado: 'ABIERTA' };
+        return { organizacionId, estado: 'ABIERTA', usuarioId: actorId };
       case 'gastos':
       case 'movimientos_cajas':
-        return { caja: { organizacionId, estado: 'ABIERTA' } };
+        return { caja: { organizacionId, estado: 'ABIERTA', usuarioId: actorId } };
       default:
         return this.orgScopeWhere(tableName, organizacionId);
     }
@@ -224,10 +231,12 @@ export class SincronizacionService {
     const esCobrador = actorRol === 'COBRADOR';
     switch (tableName) {
       case 'clientes': {
-        if (!esCobrador) return true;
+        // Antes se saltaba esta validación por completo para ADMIN/CAJERO,
+        // dejando que un cliente quedara con rutaId de otra organización
+        // (ensureRutaExists solo comprueba existencia, no organización).
         if (!data.rutaId) return false;
         const ruta = await tx.ruta.findFirst({
-          where: { id: data.rutaId, organizacionId, responsableId: actorId },
+          where: { id: data.rutaId, organizacionId, ...(esCobrador ? { responsableId: actorId } : {}) },
           select: { id: true },
         });
         return !!ruta;
@@ -256,14 +265,23 @@ export class SincronizacionService {
       case 'movimientos_cajas': {
         if (!data.cajaId) return false;
         const caja = await tx.caja.findFirst({
-          where: { id: data.cajaId, organizacionId, ...(esCobrador ? { estado: 'ABIERTA' } : {}) },
+          where: {
+            id: data.cajaId,
+            organizacionId,
+            ...(esCobrador ? { estado: 'ABIERTA', usuarioId: actorId } : {}),
+          },
           select: { id: true },
         });
         return !!caja;
       }
       case 'jornadas_cobranza': {
         if (esCobrador && data.usuarioId && data.usuarioId !== actorId) return false;
-        return true;
+        if (!data.rutaId) return false;
+        const ruta = await tx.ruta.findFirst({
+          where: { id: data.rutaId, organizacionId, ...(esCobrador ? { responsableId: actorId } : {}) },
+          select: { id: true },
+        });
+        return !!ruta;
       }
       default:
         // Tablas con organizacionId directo: el propio push fuerza el org.
@@ -289,6 +307,12 @@ export class SincronizacionService {
     // un COBRADOR/CAJERO no debe poder auto-asignarse (o quitarle) una ruta vía sync.
     if (tableName === 'rutas' && actorRol !== 'ADMIN' && actorRol !== 'SUPER_ADMIN') {
       delete data.responsableId;
+    }
+    // El dueño de una caja se fija en el servidor al crearla (siempre el
+    // actor que hace el push) y nunca se reasigna vía sync — de lo contrario
+    // un dispositivo podría atribuir su caja a otro cobrador.
+    if (tableName === 'cajas') {
+      delete data.usuarioId;
     }
     return data;
   }
@@ -379,7 +403,7 @@ export class SincronizacionService {
         model: prisma.caja,
         whereClause: (date: Date | null) => ({
           organizacionId,
-          ...(esCobrador ? { estado: 'ABIERTA' } : {}),
+          ...(esCobrador ? { estado: 'ABIERTA', usuarioId: actorId } : {}),
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -387,7 +411,7 @@ export class SincronizacionService {
         name: 'gastos',
         model: prisma.gasto,
         whereClause: (date: Date | null) => ({
-          caja: { organizacionId, ...(esCobrador ? { estado: 'ABIERTA' } : {}) },
+          caja: { organizacionId, ...(esCobrador ? { estado: 'ABIERTA', usuarioId: actorId } : {}) },
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -404,7 +428,7 @@ export class SincronizacionService {
         name: 'movimientos_cajas',
         model: prisma.movimientoCaja,
         whereClause: (date: Date | null) => ({
-          caja: { organizacionId, ...(esCobrador ? { estado: 'ABIERTA' } : {}) },
+          caja: { organizacionId, ...(esCobrador ? { estado: 'ABIERTA', usuarioId: actorId } : {}) },
           ...(date ? { createdAt: { gt: date } } : {}),
         }),
       },
@@ -617,6 +641,11 @@ export class SincronizacionService {
               mappedData.organizacionId = organizacionId;
             }
 
+            // La caja siempre pertenece a quien la crea (ver stripProtectedFields).
+            if (table.name === 'cajas') {
+              mappedData.usuarioId = userId;
+            }
+
             // clientes.rutaId es FK obligatoria: sin ruta no se puede crear.
             // Se omite el registro (en vez de abortar toda la transacción) para
             // que un único registro heredado inválido no bloquee el resto.
@@ -646,8 +675,34 @@ export class SincronizacionService {
                 );
                 continue;
               }
+              // Revalidar la FK padre también aquí: sin esto, un registro
+              // propio podía reasignarse (p. ej. clienteId de un préstamo)
+              // hacia el id de otra organización en este mismo upsert.
+              const padreValidoUpsert = await this.validateParentInOrg(tx, table.name, mappedData, organizacionId, userId, userRol);
+              if (!padreValidoUpsert) {
+                logger.warn(
+                  `⚠️  [SYNC PUSH] Se ignoró la actualización (upsert) de ${table.name} ${id}: FK padre inexistente o de otra organización.`
+                );
+                continue;
+              }
               await modelTx.update({ where: { id }, data: dataWithoutId });
               continue;
+            }
+
+            // Colisión de `codigo` entre dispositivos (conteo local, único por
+            // organización en el servidor): se omite el registro en vez de
+            // dejar que Prisma aborte todo el lote con P2002.
+            if (table.name === 'clientes' && mappedData.codigo) {
+              const codigoEnUso = await modelTx.findFirst({
+                where: { organizacionId, codigo: mappedData.codigo, id: { not: id } },
+                select: { id: true },
+              });
+              if (codigoEnUso) {
+                logger.warn(
+                  `⚠️  [SYNC PUSH] Se ignoró la creación del cliente ${id}: el código '${mappedData.codigo}' ya está en uso por otro cliente de la organización.`
+                );
+                continue;
+              }
             }
 
             // Registro nuevo: validar que el padre (cliente/prestamo/caja) sea de la org
@@ -689,6 +744,16 @@ export class SincronizacionService {
             if (!propio) {
               logger.warn(
                 `⚠️  [SYNC PUSH] Se ignoró la actualización de ${table.name} ${id}: inexistente o de otra organización.`
+              );
+              continue;
+            }
+            // Revalidar la FK padre: sin esto, un update podía reasignar la FK
+            // (p. ej. clienteId/cajaId/rutaId) de un registro propio hacia el
+            // id de otra organización.
+            const padreValido = await this.validateParentInOrg(tx, table.name, mappedData, organizacionId, userId, userRol);
+            if (!padreValido) {
+              logger.warn(
+                `⚠️  [SYNC PUSH] Se ignoró la actualización de ${table.name} ${id}: FK padre inexistente o de otra organización.`
               );
               continue;
             }
