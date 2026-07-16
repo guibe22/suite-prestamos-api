@@ -33,9 +33,10 @@ async function main() {
   }
   console.log('✅ Roles creados o actualizados.');
 
-  // Planes de suscripción. Precios y límites son placeholder (activo: false
-  // salvo el FREE/trial) hasta que se confirmen los definitivos — son datos,
-  // se ajustan aquí sin tocar código.
+  // Planes de suscripción. Precios son placeholder (activo: false salvo
+  // FREE/BASICO) hasta que se confirmen los definitivos — son datos, se
+  // ajustan aquí sin tocar código. `limites` usa `null` para "sin límite".
+  // Tabla acordada con Wilber (jul 2026):
   const planes = [
     {
       codigo: 'FREE',
@@ -43,7 +44,15 @@ async function main() {
       descripcion: 'Plan de prueba asignado automáticamente a organizaciones nuevas.',
       precioMensual: 0,
       moneda: 'USD',
-      limites: { maxUsuarios: 2, maxClientes: 50, maxRutas: 2 },
+      limites: {
+        maxUsuarios: 2,
+        maxClientes: 50,
+        maxPrestamosActivos: 50,
+        maxRutas: 2,
+        reportesAvanzados: false,
+        contratoPersonalizado: false,
+        soportePrioritario: false,
+      },
       esPredeterminado: true,
       activo: true,
       orden: 0,
@@ -54,7 +63,15 @@ async function main() {
       descripcion: 'Plan Básico mensual.',
       precioMensual: 10,
       moneda: 'USD',
-      limites: { maxUsuarios: 5, maxClientes: 500, maxRutas: 10 },
+      limites: {
+        maxUsuarios: 5,
+        maxClientes: 300,
+        maxPrestamosActivos: 500,
+        maxRutas: 8,
+        reportesAvanzados: false,
+        contratoPersonalizado: true,
+        soportePrioritario: false,
+      },
       paypalPlanId: 'P-85V81686YU9230029NJMOYMA',
       esPredeterminado: false,
       activo: true,
@@ -63,13 +80,41 @@ async function main() {
     {
       codigo: 'PRO',
       nombre: 'Pro',
-      descripcion: 'Plan pendiente de definir precio/límites finales.',
+      descripcion: 'Plan Pro mensual.',
+      precioMensual: 25,
+      moneda: 'USD',
+      limites: {
+        maxUsuarios: 15,
+        maxClientes: 1500,
+        maxPrestamosActivos: 3000,
+        maxRutas: 25,
+        reportesAvanzados: true,
+        contratoPersonalizado: true,
+        soportePrioritario: true,
+      },
+      paypalPlanId: 'P-835600520J3052705NJMPYSI',
+      esPredeterminado: false,
+      activo: true,
+      orden: 2,
+    },
+    {
+      codigo: 'EMPRESARIAL',
+      nombre: 'Empresarial',
+      descripcion: 'Sin límites de uso; precio a medida (contactar ventas). Pendiente de definir precio final.',
       precioMensual: 0,
       moneda: 'USD',
-      limites: { maxUsuarios: 20, maxClientes: 5000, maxRutas: 50 },
+      limites: {
+        maxUsuarios: null,
+        maxClientes: null,
+        maxPrestamosActivos: null,
+        maxRutas: null,
+        reportesAvanzados: true,
+        contratoPersonalizado: true,
+        soportePrioritario: true,
+      },
       esPredeterminado: false,
       activo: false,
-      orden: 2,
+      orden: 3,
     },
   ];
 

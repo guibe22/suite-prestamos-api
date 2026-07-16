@@ -3,6 +3,7 @@ import { UsuarioRepository } from './usuario.repository.js';
 import { hashPassword } from '../../utils/bcrypt.js';
 import { sendEmail } from '../../shared/email/email.service.js';
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '../../shared/errors/custom.error.js';
+import { SuscripcionService } from '../suscripcion/suscripcion.service.js';
 import type { ActualizarUsuarioInput, CrearUsuarioInput, MiembroEquipoResponse } from './usuario.types.js';
 
 const ROLES_ADMINISTRABLES = ['COBRADOR', 'CAJERO'];
@@ -10,6 +11,7 @@ const INVITACION_VIGENCIA_MS = 7 * 24 * 60 * 60 * 1000;
 
 export class UsuarioService {
   private usuarioRepository = new UsuarioRepository();
+  private suscripcionService = new SuscripcionService();
 
   async listar(organizacionId: string): Promise<MiembroEquipoResponse[]> {
     const usuarios = await this.usuarioRepository.findManyByOrganizacion(organizacionId);
@@ -29,6 +31,8 @@ export class UsuarioService {
     if (existente) {
       throw new ConflictError('El correo electrónico ya está registrado.');
     }
+
+    await this.suscripcionService.verificarLimite(organizacionId, 'usuarios', 1);
 
     const rol = await this.buscarOCrearRol(data.rol);
     const invitacionToken = this.generarCodigoInvitacion();

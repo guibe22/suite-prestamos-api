@@ -1,8 +1,10 @@
 import { prisma } from '../../config/database.js';
 import { logger } from '../../config/logger.js';
+import { SuscripcionService } from '../suscripcion/suscripcion.service.js';
 import type { PullResponse, WatermelonChanges } from './sincronizacion.types.js';
 
 export class SincronizacionService {
+  private suscripcionService = new SuscripcionService();
   /**
    * Helper para mapear fechas (objetos Date) a timestamps (milisegundos)
    * y Decimales de Prisma a numbers para su consumo en el cliente
@@ -581,6 +583,21 @@ export class SincronizacionService {
     if (totalEntrantes === 0) {
       logger.info('✅ [SYNC PUSH] El cliente no tenía cambios locales que subir.');
       return;
+    }
+
+    // Límites del plan: se verifica ANTES de escribir nada, para rechazar el
+    // push completo si excede el plan en vez de aplicar parcialmente.
+    const nuevosClientes = changes.clientes?.created?.length ?? 0;
+    const nuevasRutas = changes.rutas?.created?.length ?? 0;
+    const nuevosPrestamos = changes.prestamos?.created?.length ?? 0;
+    if (nuevosClientes > 0) {
+      await this.suscripcionService.verificarLimite(organizacionId, 'clientes', nuevosClientes);
+    }
+    if (nuevasRutas > 0) {
+      await this.suscripcionService.verificarLimite(organizacionId, 'rutas', nuevasRutas);
+    }
+    if (nuevosPrestamos > 0) {
+      await this.suscripcionService.verificarLimite(organizacionId, 'prestamosActivos', nuevosPrestamos);
     }
 
     // Definimos el orden de las operaciones para evitar problemas de FK.

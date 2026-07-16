@@ -1,8 +1,24 @@
 import { prisma } from '../../config/database.js';
-import { BadRequestError, NotFoundError } from '../../shared/errors/custom.error.js';
+import { BadRequestError, ForbiddenError, NotFoundError } from '../../shared/errors/custom.error.js';
 import { crearSuscripcion as crearSuscripcionPaypal } from './paypal.client.js';
 import { verificarCompraGoogle as verificarCompraGoogleApi } from './google-play.client.js';
 import type { ProveedorPago } from '@prisma/client';
+
+export type RecursoLimitado = 'usuarios' | 'clientes' | 'rutas' | 'prestamosActivos';
+
+const CLAVE_LIMITE: Record<RecursoLimitado, string> = {
+  usuarios: 'maxUsuarios',
+  clientes: 'maxClientes',
+  rutas: 'maxRutas',
+  prestamosActivos: 'maxPrestamosActivos',
+};
+
+const ETIQUETA_RECURSO: Record<RecursoLimitado, string> = {
+  usuarios: 'usuarios',
+  clientes: 'clientes',
+  rutas: 'rutas',
+  prestamosActivos: 'préstamos activos',
+};
 
 export class SuscripcionService {
   async obtenerMiSuscripcion(organizacionId: string) {
@@ -53,12 +69,42 @@ export class SuscripcionService {
   }
 
   async obtenerUsoActual(organizacionId: string) {
-    const [usuarios, clientes, rutas] = await Promise.all([
+    const [usuarios, clientes, rutas, prestamosActivos] = await Promise.all([
       prisma.usuario.count({ where: { organizacionId, deletedAt: null } }),
       prisma.cliente.count({ where: { organizacionId, deletedAt: null } }),
       prisma.ruta.count({ where: { organizacionId, deletedAt: null } }),
+      prisma.prestamo.count({ where: { cliente: { organizacionId }, estado: 'ACTIVO', deletedAt: null } }),
     ]);
-    return { usuarios, clientes, rutas };
+    return { usuarios, clientes, rutas, prestamosActivos };
+  }
+
+  /**
+   * Lanza ForbiddenError si crear `incremento` recursos de este tipo
+   * excedería el límite del plan activo. `null`/ausente en `plan.limites`
+   * significa sin límite (plan Empresarial).
+   */
+  async verificarLimite(organizacionId: string, recurso: RecursoLimitado, incremento: number): Promise<void> {
+    if (incremento <= 0) return;
+
+    const suscripcion = await prisma.suscripcion.findUnique({
+      where: { organizacionId },
+      include: { plan: true },
+    });
+    // Sin suscripción: requireActiveSubscription ya debió bloquear la
+    // petición antes de llegar aquí; no hay límite que verificar.
+    if (!suscripcion) return;
+
+    const limites = (suscripcion.plan.limites as Record<string, unknown>) ?? {};
+    const limite = limites[CLAVE_LIMITE[recurso]];
+    if (limite === null || limite === undefined) return;
+
+    const uso = await this.obtenerUsoActual(organizacionId);
+    const actual = uso[recurso];
+    if (actual + incremento > (limite as number)) {
+      throw new ForbiddenError(
+        `Alcanzaste el límite de ${ETIQUETA_RECURSO[recurso]} de tu plan (${limite}). Sube de plan en Ajustes > Plan y facturación para agregar más.`
+      );
+    }
   }
 
   /** true si la organización puede seguir escribiendo (TRIAL vigente o ACTIVA). */
