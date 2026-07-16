@@ -33,6 +33,60 @@ async function main() {
   }
   console.log('✅ Roles creados o actualizados.');
 
+  // Planes de suscripción. Precios y límites son placeholder (activo: false
+  // salvo el FREE/trial) hasta que se confirmen los definitivos — son datos,
+  // se ajustan aquí sin tocar código.
+  const planes = [
+    {
+      codigo: 'FREE',
+      nombre: 'Gratis / Prueba',
+      descripcion: 'Plan de prueba asignado automáticamente a organizaciones nuevas.',
+      precioMensual: 0,
+      moneda: 'USD',
+      limites: { maxUsuarios: 2, maxClientes: 50, maxRutas: 2 },
+      esPredeterminado: true,
+      activo: true,
+      orden: 0,
+    },
+    {
+      codigo: 'BASICO',
+      nombre: 'Básico',
+      descripcion: 'Plan pendiente de definir precio/límites finales.',
+      precioMensual: 0,
+      moneda: 'USD',
+      limites: { maxUsuarios: 5, maxClientes: 500, maxRutas: 10 },
+      esPredeterminado: false,
+      activo: false,
+      orden: 1,
+    },
+    {
+      codigo: 'PRO',
+      nombre: 'Pro',
+      descripcion: 'Plan pendiente de definir precio/límites finales.',
+      precioMensual: 0,
+      moneda: 'USD',
+      limites: { maxUsuarios: 20, maxClientes: 5000, maxRutas: 50 },
+      esPredeterminado: false,
+      activo: false,
+      orden: 2,
+    },
+  ];
+
+  for (const plan of planes) {
+    await prisma.plan.upsert({
+      where: { codigo: plan.codigo },
+      update: {
+        nombre: plan.nombre,
+        descripcion: plan.descripcion,
+        limites: plan.limites,
+        esPredeterminado: plan.esPredeterminado,
+        orden: plan.orden,
+      },
+      create: plan,
+    });
+  }
+  console.log('✅ Planes de suscripción creados o actualizados.');
+
   console.log('🏁 Proceso de siembra finalizado con éxito.');
 }
 

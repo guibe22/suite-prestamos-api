@@ -1,4 +1,6 @@
 import { prisma } from '../../config/database.js';
+import { logger } from '../../config/logger.js';
+import { TRIAL_DIAS } from '../suscripcion/suscripcion.constants.js';
 import type { RegisterInput } from './auth.types.js';
 
 export class AuthRepository {
@@ -114,6 +116,28 @@ export class AuthRepository {
           rol: true,
         },
       });
+
+      // 4. Alta automática de suscripción en TRIAL sobre el plan
+      // predeterminado. Si el seed de planes no ha corrido aún (entorno
+      // recién levantado) se omite en vez de romper el registro: la
+      // organización queda sin fila de Suscripcion y el enforcement la trata
+      // como sin acceso (ver SuscripcionService.tieneAccesoActivo).
+      const planPredeterminado = await tx.plan.findFirst({ where: { esPredeterminado: true } });
+      if (planPredeterminado) {
+        await tx.suscripcion.create({
+          data: {
+            organizacionId: organizacion.id,
+            planId: planPredeterminado.id,
+            proveedor: 'MANUAL',
+            estado: 'TRIAL',
+            trialTerminaEn: new Date(Date.now() + TRIAL_DIAS * 24 * 60 * 60 * 1000),
+          },
+        });
+      } else {
+        logger.warn(
+          `⚠️  No hay plan predeterminado (esPredeterminado=true): la organización ${organizacion.id} quedó sin suscripción. Corre "npm run db:seed".`
+        );
+      }
 
       return { usuario, organizacion, cuenta };
     });

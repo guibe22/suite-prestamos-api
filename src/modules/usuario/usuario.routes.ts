@@ -4,6 +4,7 @@ import { validate } from '../../middlewares/validate.middleware.js';
 import { crearUsuarioSchema, actualizarUsuarioSchema, idParamSchema } from './usuario.schema.js';
 import { authMiddleware } from '../../middlewares/auth.middleware.js';
 import { checkRole } from '../../middlewares/permissions.middleware.js';
+import { requireActiveSubscription } from '../../middlewares/suscripcion.middleware.js';
 
 const router = Router();
 const controller = new UsuarioController();
@@ -53,7 +54,7 @@ router.get('/', controller.listar);
  *       201:
  *         description: Miembro creado con éxito
  */
-router.post('/', validate({ body: crearUsuarioSchema }), controller.crear);
+router.post('/', requireActiveSubscription(), validate({ body: crearUsuarioSchema }), controller.crear);
 
 /**
  * @swagger

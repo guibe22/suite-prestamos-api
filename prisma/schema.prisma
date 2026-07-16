@@ -37,6 +37,107 @@ model Organizacion {
   cajas    Caja[]
   rutas    Ruta[]
   jornadas JornadaCobranza[]
+
+  suscripcion Suscripcion?
+}
+
+/// Catálogo de planes de suscripción. Editable vía seed/admin sin tocar
+/// código: precios y límites son datos, no constantes hardcodeadas.
+model Plan {
+  id          String  @id @default(uuid())
+  codigo      String  @unique // "FREE", "BASICO", "PRO" — clave estable referenciada en código
+  nombre      String
+  descripcion String?
+
+  precioMensual Decimal @db.Decimal(10, 2)
+  moneda        String  @default("USD")
+
+  /// Límites/features data-driven, ej:
+  /// { "maxUsuarios": 5, "maxClientes": 500, "maxRutas": 10 }
+  limites Json
+
+  // IDs del catálogo de cada proveedor externo, para mapear este plan a
+  // su contraparte en PayPal (billing plan) y Google Play (producto base).
+  paypalPlanId    String?
+  googleProductId String?
+
+  /// Plan que se asigna automáticamente al crear una organización nueva
+  /// (arranca en TRIAL sobre este plan). Debe haber como máximo uno activo.
+  esPredeterminado Boolean @default(false)
+  activo           Boolean @default(true)
+  orden            Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  suscripciones Suscripcion[]
+}
+
+enum EstadoSuscripcion {
+  TRIAL
+  ACTIVA
+  PENDIENTE_PAGO
+  SUSPENDIDA
+  CANCELADA
+  EXPIRADA
+}
+
+enum ProveedorPago {
+  PAYPAL
+  GOOGLE_PLAY
+  MANUAL
+}
+
+model Suscripcion {
+  id             String       @id @default(uuid())
+  organizacionId String       @unique
+  organizacion   Organizacion @relation(fields: [organizacionId], references: [id], onDelete: Cascade)
+
+  planId String
+  plan   Plan   @relation(fields: [planId], references: [id])
+
+  proveedor ProveedorPago
+  estado    EstadoSuscripcion @default(TRIAL)
+
+  // Identificadores externos (el que corresponda según `proveedor`).
+  paypalSubscriptionId String? @unique
+  // Los tokens de compra de Google rotan en cada renovación/upgrade; este es
+  // siempre el último conocido.
+  googlePurchaseToken  String? @unique
+  googleOrderId        String?
+
+  trialTerminaEn  DateTime?
+  periodoInicioEn DateTime?
+  // Contra este campo se valida el enforcement de acceso.
+  periodoFinEn    DateTime?
+  canceladaEn     DateTime?
+  ultimoPagoEn    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  eventos SuscripcionEvento[]
+
+  @@index([estado])
+  @@index([periodoFinEn])
+}
+
+/// Auditoría + idempotencia de webhooks: cada evento externo procesado se
+/// registra por su ID único (evento de PayPal o messageId de Pub/Sub de
+/// Google) para que los reintentos (PayPal reenvía, Google Pub/Sub entrega
+/// "at-least-once") no dupliquen efectos sobre la suscripción.
+model SuscripcionEvento {
+  id            String       @id @default(uuid())
+  suscripcionId String?
+  suscripcion   Suscripcion? @relation(fields: [suscripcionId], references: [id], onDelete: SetNull)
+
+  proveedor       ProveedorPago
+  externalEventId String        @unique
+  tipo            String
+  payload         Json
+  procesadoEn     DateTime      @default(now())
+
+  @@index([suscripcionId])
 }
 
 enum DiaSemana {

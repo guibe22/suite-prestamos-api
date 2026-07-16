@@ -17,6 +17,20 @@ const envSchema = z.object({
   RESEND_FROM: z.string().default('Suite Préstamos <onboarding@resend.dev>'),
   // Orígenes permitidos para CORS (separados por coma). Requerido en producción.
   CORS_ORIGINS: z.string().optional(),
+
+  // Suscripciones / monetización. Opcionales en dev igual que RESEND_API_KEY:
+  // si no están configuradas, requireActiveSubscription() deja pasar todo
+  // (bypass explícito de desarrollo, con warning al arrancar).
+  SUBSCRIPTIONS_ENFORCEMENT_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  PAYPAL_CLIENT_ID: z.string().optional(),
+  PAYPAL_CLIENT_SECRET: z.string().optional(),
+  PAYPAL_WEBHOOK_ID: z.string().optional(),
+  PAYPAL_MODE: z.enum(['sandbox', 'live']).default('sandbox'),
+  GOOGLE_SERVICE_ACCOUNT_JSON: z.string().optional(),
+  GOOGLE_PLAY_PACKAGE_NAME: z.string().optional(),
 })
   .refine((e) => e.NODE_ENV !== 'production' || !/change-me/i.test(e.JWT_SECRET), {
     message: 'JWT_SECRET no puede ser el valor placeholder en producción.',

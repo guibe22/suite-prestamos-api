@@ -18,6 +18,7 @@ import { configuracionRoutes } from '../modules/configuracion/index.js';
 import { auditoriaRoutes } from '../modules/auditoria/index.js';
 import { sincronizacionRoutes } from '../modules/sincronizacion/index.js';
 import { notificacionRoutes } from '../modules/notificacion/index.js';
+import { suscripcionRoutes } from '../modules/suscripcion/index.js';
 
 const router = Router();
 
@@ -41,5 +42,6 @@ router.use('/configuracion', configuracionRoutes);
 router.use('/auditoria', auditoriaRoutes);
 router.use('/sincronizacion', sincronizacionRoutes);
 router.use('/notificacion', notificacionRoutes);
+router.use('/suscripcion', suscripcionRoutes);
 
 export default router;
