@@ -30,7 +30,10 @@ app.use(express.json({ limit: '5mb' }));
 
 // Logger de peticiones básico
 app.use((req, _res, next) => {
-  logger.info({ method: req.method, url: req.url }, 'Petición recibida');
+  logger.info(
+    { method: req.method, url: req.url, userAgent: req.headers['user-agent'], ip: req.ip },
+    'Petición recibida'
+  );
   next();
 });
 
