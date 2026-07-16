@@ -51,12 +51,13 @@ async function main() {
     {
       codigo: 'BASICO',
       nombre: 'Básico',
-      descripcion: 'Plan pendiente de definir precio/límites finales.',
-      precioMensual: 0,
+      descripcion: 'Plan Básico mensual.',
+      precioMensual: 10,
       moneda: 'USD',
       limites: { maxUsuarios: 5, maxClientes: 500, maxRutas: 10 },
+      paypalPlanId: 'P-85V81686YU9230029NJMOYMA',
       esPredeterminado: false,
-      activo: false,
+      activo: true,
       orden: 1,
     },
     {
@@ -78,8 +79,11 @@ async function main() {
       update: {
         nombre: plan.nombre,
         descripcion: plan.descripcion,
+        precioMensual: plan.precioMensual,
         limites: plan.limites,
+        paypalPlanId: (plan as { paypalPlanId?: string }).paypalPlanId,
         esPredeterminado: plan.esPredeterminado,
+        activo: plan.activo,
         orden: plan.orden,
       },
       create: plan,
