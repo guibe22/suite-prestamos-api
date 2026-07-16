@@ -147,8 +147,25 @@ export class SincronizacionService {
       case 'gastos': return 'gasto';
       case 'movimientos_cajas': return 'movimientoCaja';
       case 'jornadas_cobranza': return 'jornadaCobranza';
+      case 'ruta_colaboradores': return 'rutaColaborador';
       default: return tableName.replace(/s$/, '');
     }
+  }
+
+  /**
+   * Condición Prisma que matchea una Ruta accesible para `actorId`: ya sea
+   * porque es el responsable principal (Ruta.responsableId) o porque figura
+   * como colaborador adicional (RutaColaborador). Desde que una ruta admite
+   * varios cobradores, todo chequeo de "es la ruta de este actor" debe usar
+   * este OR en vez de comparar solo responsableId.
+   */
+  private rutaAccessFilter(actorId: string): any {
+    return {
+      OR: [
+        { responsableId: actorId },
+        { colaboradores: { some: { usuarioId: actorId, deletedAt: null } } },
+      ],
+    };
   }
 
   /**
@@ -176,6 +193,8 @@ export class SincronizacionService {
       case 'gastos':
       case 'movimientos_cajas':
         return { caja: { organizacionId } };
+      case 'ruta_colaboradores':
+        return { ruta: { organizacionId } };
       default:
         return {};
     }
@@ -195,14 +214,14 @@ export class SincronizacionService {
     if (actorRol !== 'COBRADOR') return this.orgScopeWhere(tableName, organizacionId);
     switch (tableName) {
       case 'rutas':
-        return { organizacionId, responsableId: actorId };
+        return { organizacionId, ...this.rutaAccessFilter(actorId) };
       case 'clientes':
-        return { organizacionId, ruta: { responsableId: actorId } };
+        return { organizacionId, ruta: this.rutaAccessFilter(actorId) };
       case 'prestamos':
-        return { cliente: { organizacionId, ruta: { responsableId: actorId } } };
+        return { cliente: { organizacionId, ruta: this.rutaAccessFilter(actorId) } };
       case 'cuotas':
       case 'pagos':
-        return { prestamo: { cliente: { organizacionId, ruta: { responsableId: actorId } } } };
+        return { prestamo: { cliente: { organizacionId, ruta: this.rutaAccessFilter(actorId) } } };
       case 'jornadas_cobranza':
         return { organizacionId, usuarioId: actorId };
       case 'cajas':
@@ -210,6 +229,11 @@ export class SincronizacionService {
       case 'gastos':
       case 'movimientos_cajas':
         return { caja: { organizacionId, estado: 'ABIERTA', usuarioId: actorId } };
+      case 'ruta_colaboradores':
+        // Gestionar colaboradores es una decisión administrativa bloqueada
+        // más arriba (push()) para no-ADMIN; este where nunca debe matchear
+        // un COBRADOR aunque ese gate cambie en el futuro.
+        return { id: '' };
       default:
         return this.orgScopeWhere(tableName, organizacionId);
     }
@@ -236,7 +260,7 @@ export class SincronizacionService {
         // (ensureRutaExists solo comprueba existencia, no organización).
         if (!data.rutaId) return false;
         const ruta = await tx.ruta.findFirst({
-          where: { id: data.rutaId, organizacionId, ...(esCobrador ? { responsableId: actorId } : {}) },
+          where: { id: data.rutaId, organizacionId, ...(esCobrador ? this.rutaAccessFilter(actorId) : {}) },
           select: { id: true },
         });
         return !!ruta;
@@ -244,7 +268,7 @@ export class SincronizacionService {
       case 'prestamos': {
         if (!data.clienteId) return false;
         const c = await tx.cliente.findFirst({
-          where: { id: data.clienteId, organizacionId, ...(esCobrador ? { ruta: { responsableId: actorId } } : {}) },
+          where: { id: data.clienteId, organizacionId, ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
           select: { id: true },
         });
         return !!c;
@@ -255,7 +279,7 @@ export class SincronizacionService {
         const p = await tx.prestamo.findFirst({
           where: {
             id: data.prestamoId,
-            cliente: { organizacionId, ...(esCobrador ? { ruta: { responsableId: actorId } } : {}) },
+            cliente: { organizacionId, ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
           },
           select: { id: true },
         });
@@ -278,10 +302,19 @@ export class SincronizacionService {
         if (esCobrador && data.usuarioId && data.usuarioId !== actorId) return false;
         if (!data.rutaId) return false;
         const ruta = await tx.ruta.findFirst({
-          where: { id: data.rutaId, organizacionId, ...(esCobrador ? { responsableId: actorId } : {}) },
+          where: { id: data.rutaId, organizacionId, ...(esCobrador ? this.rutaAccessFilter(actorId) : {}) },
           select: { id: true },
         });
         return !!ruta;
+      }
+      case 'ruta_colaboradores': {
+        // Solo alcanzable por ADMIN/SUPER_ADMIN (ver gate en push()); se valida
+        // igualmente que tanto la ruta como el usuario agregado sean de la org.
+        if (!data.rutaId || !data.usuarioId) return false;
+        const ruta = await tx.ruta.findFirst({ where: { id: data.rutaId, organizacionId }, select: { id: true } });
+        if (!ruta) return false;
+        const usuario = await tx.usuario.findFirst({ where: { id: data.usuarioId, organizacionId }, select: { id: true } });
+        return !!usuario;
       }
       default:
         // Tablas con organizacionId directo: el propio push fuerza el org.
@@ -372,7 +405,7 @@ export class SincronizacionService {
         model: prisma.cliente,
         whereClause: (date: Date | null) => ({
           organizacionId,
-          ...(esCobrador ? { ruta: { responsableId: actorId } } : {}),
+          ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}),
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -380,7 +413,7 @@ export class SincronizacionService {
         name: 'prestamos',
         model: prisma.prestamo,
         whereClause: (date: Date | null) => ({
-          cliente: { organizacionId, ...(esCobrador ? { ruta: { responsableId: actorId } } : {}) },
+          cliente: { organizacionId, ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -389,7 +422,7 @@ export class SincronizacionService {
         model: prisma.cuota,
         whereClause: (date: Date | null) => ({
           prestamo: {
-            cliente: { organizacionId, ...(esCobrador ? { ruta: { responsableId: actorId } } : {}) },
+            cliente: { organizacionId, ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
           },
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
@@ -399,7 +432,7 @@ export class SincronizacionService {
         model: prisma.pago,
         whereClause: (date: Date | null) => ({
           prestamo: {
-            cliente: { organizacionId, ...(esCobrador ? { ruta: { responsableId: actorId } } : {}) },
+            cliente: { organizacionId, ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
           },
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
@@ -426,7 +459,15 @@ export class SincronizacionService {
         model: prisma.ruta,
         whereClause: (date: Date | null) => ({
           organizacionId,
-          ...(esCobrador ? { responsableId: actorId } : {}),
+          ...(esCobrador ? this.rutaAccessFilter(actorId) : {}),
+          ...(date ? { updatedAt: { gt: date } } : {}),
+        }),
+      },
+      {
+        name: 'ruta_colaboradores',
+        model: prisma.rutaColaborador,
+        whereClause: (date: Date | null) => ({
+          ruta: { organizacionId, ...(esCobrador ? this.rutaAccessFilter(actorId) : {}) },
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -441,9 +482,12 @@ export class SincronizacionService {
       {
         name: 'jornadas_cobranza',
         model: prisma.jornadaCobranza,
+        // Visible para cualquier cobrador con acceso a la ruta (responsable o
+        // colaborador), no solo quien la ejecutó: así un colaborador ve el
+        // progreso de la jornada que corrió su compañero en la misma ruta.
         whereClause: (date: Date | null) => ({
           organizacionId,
-          ...(esCobrador ? { usuarioId: actorId } : {}),
+          ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}),
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -546,6 +590,7 @@ export class SincronizacionService {
       { name: 'organizaciones', model: prisma.organizacion, hasOrgId: false },
       { name: 'usuarios', model: prisma.usuario, hasOrgId: true },
       { name: 'rutas', model: prisma.ruta, hasOrgId: true },
+      { name: 'ruta_colaboradores', model: prisma.rutaColaborador, hasOrgId: false },
       { name: 'jornadas_cobranza', model: prisma.jornadaCobranza, hasOrgId: true },
       { name: 'clientes', model: prisma.cliente, hasOrgId: true },
       { name: 'cajas', model: prisma.caja, hasOrgId: true },
@@ -563,6 +608,17 @@ export class SincronizacionService {
         // La organización no se elimina desde el cliente; los usuarios se
         // gestionan solo en el servidor (nunca vía sync).
         if (table.name === 'organizaciones' || table.name === 'usuarios') continue;
+        // Quitar un colaborador de una ruta es una decisión administrativa,
+        // igual que reasignar el responsable (ver stripProtectedFields).
+        if (table.name === 'ruta_colaboradores' && userRol !== 'ADMIN' && userRol !== 'SUPER_ADMIN') {
+          const tc = changes[table.name];
+          if (tc && tc.deleted.length > 0) {
+            logger.warn(
+              `⚠️  [SYNC PUSH] Se ignoraron ${tc.deleted.length} eliminaciones de 'ruta_colaboradores' (solo ADMIN puede gestionar colaboradores).`
+            );
+          }
+          continue;
+        }
         const tableChanges = changes[table.name];
         if (tableChanges && tableChanges.deleted.length > 0) {
           const idsToDelete = tableChanges.deleted;
@@ -602,6 +658,17 @@ export class SincronizacionService {
           if (tableChanges.created.length || tableChanges.updated.length) {
             logger.warn(
               `⚠️  [SYNC PUSH] Se ignoraron ${tableChanges.created.length + tableChanges.updated.length} cambios en 'usuarios' (no editable vía sync).`
+            );
+          }
+          continue;
+        }
+
+        // Agregar/reemplazar un colaborador de ruta es una decisión
+        // administrativa (ver bloqueo simétrico arriba en eliminaciones).
+        if (table.name === 'ruta_colaboradores' && userRol !== 'ADMIN' && userRol !== 'SUPER_ADMIN') {
+          if (tableChanges.created.length || tableChanges.updated.length) {
+            logger.warn(
+              `⚠️  [SYNC PUSH] Se ignoraron ${tableChanges.created.length + tableChanges.updated.length} cambios en 'ruta_colaboradores' (solo ADMIN puede gestionar colaboradores).`
             );
           }
           continue;
@@ -657,6 +724,35 @@ export class SincronizacionService {
             // de otros cobradores.
             if (table.name === 'prestamos') {
               mappedData.usuarioId = userId;
+            }
+
+            // ruta_colaboradores es una tabla de unión (rutaId+usuarioId única):
+            // si el colaborador ya existía (activo o previamente removido con
+            // borrado lógico), reactivarlo en vez de crear una fila nueva, que
+            // chocaría contra la restricción de unicidad con el id local nuevo.
+            if (table.name === 'ruta_colaboradores') {
+              if (!mappedData.rutaId || !mappedData.usuarioId) {
+                logger.warn(
+                  `⚠️  [SYNC PUSH] ruta_colaboradores ${mappedData.id} sin rutaId/usuarioId; se omite.`
+                );
+                continue;
+              }
+              const padreValidoColab = await this.validateParentInOrg(tx, table.name, mappedData, organizacionId, userId, userRol);
+              if (!padreValidoColab) {
+                logger.warn(
+                  `⚠️  [SYNC PUSH] Se ignoró la creación de ruta_colaboradores ${mappedData.id}: ruta o usuario fuera de la organización.`
+                );
+                continue;
+              }
+              const existente = await modelTx.findUnique({
+                where: { rutaId_usuarioId: { rutaId: mappedData.rutaId, usuarioId: mappedData.usuarioId } },
+              });
+              if (existente) {
+                await modelTx.update({ where: { id: existente.id }, data: { deletedAt: null, deletedBy: null } });
+              } else {
+                await modelTx.create({ data: mappedData });
+              }
+              continue;
             }
 
             // clientes.rutaId es FK obligatoria: sin ruta no se puede crear.
