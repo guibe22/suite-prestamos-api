@@ -364,6 +364,36 @@ export class AuthService {
     await this.authRepository.updatePassword(userId, passwordHash);
   }
 
+  /**
+   * Autoeliminación de cuenta (requerida por las tiendas de apps): el propio
+   * usuario, de cualquier rol, puede eliminar su cuenta confirmando su
+   * contraseña. Si es el último ADMIN/SUPER_ADMIN activo de su organización,
+   * se bloquea para no dejarla sin nadie que administre el equipo.
+   */
+  async eliminarCuenta(userId: string, password: string): Promise<void> {
+    const user = await this.authRepository.findUserById(userId);
+    if (!user || !user.password) {
+      throw new UnauthorizedError('Usuario no encontrado.');
+    }
+
+    const isPasswordValid = await comparePassword(password, user.password);
+    if (!isPasswordValid) {
+      throw new UnauthorizedError('La contraseña es incorrecta.');
+    }
+
+    const esAdmin = user.rol.nombre === 'ADMIN' || user.rol.nombre === 'SUPER_ADMIN';
+    if (esAdmin && user.organizacionId) {
+      const otrosAdmins = await this.authRepository.countOtrosAdminsActivos(user.organizacionId, userId);
+      if (otrosAdmins === 0) {
+        throw new BadRequestError(
+          'Eres el único administrador de tu organización. Asigna otro administrador antes de eliminar tu cuenta.'
+        );
+      }
+    }
+
+    await this.authRepository.eliminarCuenta(userId);
+  }
+
   async configureOrganization(userId: string, data: any) {
     const user = await this.authRepository.findUserById(userId);
     if (!user) {

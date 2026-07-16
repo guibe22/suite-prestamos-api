@@ -55,6 +55,31 @@ export class AuthRepository {
     });
   }
 
+  /**
+   * Cuenta cuántos ADMIN/SUPER_ADMIN activos (aparte de `excluirUsuarioId`)
+   * quedarían en la organización. Se usa para impedir que el último
+   * administrador se autoelimine y deje la organización sin nadie que
+   * gestione el equipo.
+   */
+  async countOtrosAdminsActivos(organizacionId: string, excluirUsuarioId: string): Promise<number> {
+    return prisma.usuario.count({
+      where: {
+        organizacionId,
+        deletedAt: null,
+        id: { not: excluirUsuarioId },
+        rol: { nombre: { in: ['ADMIN', 'SUPER_ADMIN'] } },
+      },
+    });
+  }
+
+  /** Borrado lógico de la propia cuenta (mismo mecanismo que usuario.eliminar). */
+  async eliminarCuenta(id: string): Promise<void> {
+    await prisma.usuario.update({
+      where: { id },
+      data: { deletedAt: new Date(), deletedBy: id },
+    });
+  }
+
   async createUserWithNewOrganization(
     data: RegisterInput & { passwordHash: string; rolId: string },
   ) {

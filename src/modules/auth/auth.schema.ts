@@ -53,3 +53,7 @@ export const aceptarInvitacionSchema = z.object({
   password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres.'),
 });
 
+export const eliminarCuentaSchema = z.object({
+  password: z.string().min(1, 'Debes confirmar tu contraseña actual.'),
+});
+

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { AuthController } from './auth.controller.js';
 import { validate } from '../../middlewares/validate.middleware.js';
-import { loginSchema, registerSchema, refreshSchema, sendCodeSchema, changePasswordSchema, configureOrganizationSchema, resetPasswordSchema, aceptarInvitacionSchema } from './auth.schema.js';
+import { loginSchema, registerSchema, refreshSchema, sendCodeSchema, changePasswordSchema, configureOrganizationSchema, resetPasswordSchema, aceptarInvitacionSchema, eliminarCuentaSchema } from './auth.schema.js';
 import { authMiddleware } from '../../middlewares/auth.middleware.js';
 import { checkRole } from '../../middlewares/permissions.middleware.js';
 
@@ -159,5 +159,33 @@ router.post(
  *         description: Contraseña actual incorrecta
  */
 router.post('/change-password', authMiddleware, validate({ body: changePasswordSchema }), controller.changePassword);
+
+/**
+ * @swagger
+ * /auth/account:
+ *   delete:
+ *     summary: Eliminar (borrado lógico) la propia cuenta del usuario autenticado
+ *     tags: [Autenticación]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [password]
+ *             properties:
+ *               password:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Cuenta eliminada con éxito
+ *       400:
+ *         description: Es el único administrador de la organización
+ *       401:
+ *         description: Contraseña incorrecta
+ */
+router.delete('/account', authMiddleware, validate({ body: eliminarCuentaSchema }), controller.eliminarCuenta);
 
 export default router;

@@ -109,4 +109,18 @@ export class AuthController {
       next(error);
     }
   };
+
+  eliminarCuenta = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        res.status(401).json({ success: false, message: 'Usuario no autenticado.' });
+        return;
+      }
+      await this.authService.eliminarCuenta(userId, req.body.password);
+      sendSuccess(res, 'Cuenta eliminada con éxito.');
+    } catch (error) {
+      next(error);
+    }
+  };
 }
