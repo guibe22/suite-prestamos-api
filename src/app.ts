@@ -12,6 +12,10 @@ import { env } from './config/env.js';
 const app = express();
 const isProduction = env.NODE_ENV === 'production';
 
+// Desplegado detrás del proxy reverso de Dokploy: sin esto, Express no confía
+// en X-Forwarded-For y express-rate-limit no puede identificar bien las IPs.
+app.set('trust proxy', 1);
+
 // Cabeceras de seguridad HTTP (X-Content-Type-Options, HSTS, etc.)
 app.use(helmet());
 
