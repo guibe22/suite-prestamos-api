@@ -16,7 +16,8 @@
     "test": "vitest run",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "create-superadmin": "tsx src/scripts/create-superadmin.ts"
   },
   "keywords": [
     "suite",
