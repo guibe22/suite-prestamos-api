@@ -87,6 +87,92 @@ export async function crearSuscripcion(params: {
   return { id: data.id, approveUrl: approveLink.href };
 }
 
+export interface PaypalProductoCreado {
+  id: string;
+}
+
+/**
+ * Crea el "producto" en el catálogo de PayPal (POST /v1/catalogs/products) —
+ * paso previo obligatorio antes de poder crear un billing plan sobre él.
+ * Automatiza lo que antes se hacía a mano por PowerShell.
+ */
+export async function crearProductoPaypal(params: {
+  nombre: string;
+  descripcion?: string;
+}): Promise<PaypalProductoCreado> {
+  const accessToken = await obtenerAccessToken();
+
+  const response = await fetch(`${BASE_URL}/v1/catalogs/products`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      name: params.nombre,
+      description: params.descripcion,
+      type: 'SERVICE',
+      category: 'SOFTWARE',
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`No se pudo crear el producto en PayPal (${response.status}): ${await response.text()}`);
+  }
+
+  const data = (await response.json()) as { id: string };
+  return { id: data.id };
+}
+
+export interface PaypalPlanBillingCreado {
+  id: string;
+}
+
+/**
+ * Crea el billing plan mensual de precio fijo sobre un producto ya existente
+ * (POST /v1/billing/plans) — mismo body que usábamos manualmente por
+ * PowerShell (ciclo mensual, precio fijo, auto-cobro con reintentos).
+ */
+export async function crearPlanBillingPaypal(params: {
+  productId: string;
+  nombre: string;
+  precioMensual: number;
+  moneda: string;
+}): Promise<PaypalPlanBillingCreado> {
+  const accessToken = await obtenerAccessToken();
+
+  const response = await fetch(`${BASE_URL}/v1/billing/plans`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      product_id: params.productId,
+      name: params.nombre,
+      billing_cycles: [
+        {
+          frequency: { interval_unit: 'MONTH', interval_count: 1 },
+          tenure_type: 'REGULAR',
+          sequence: 1,
+          total_cycles: 0,
+          pricing_scheme: {
+            fixed_price: { value: params.precioMensual.toFixed(2), currency_code: params.moneda },
+          },
+        },
+      ],
+      payment_preferences: { auto_bill_outstanding: true, payment_failure_threshold: 3 },
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`No se pudo crear el plan en PayPal (${response.status}): ${await response.text()}`);
+  }
+
+  const data = (await response.json()) as { id: string };
+  return { id: data.id };
+}
+
 export interface EncabezadosWebhookPaypal {
   transmissionId: string;
   transmissionTime: string;
