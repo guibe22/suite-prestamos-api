@@ -1,5 +1,5 @@
 import { prisma } from '../../config/database.js';
-import { ConflictError, NotFoundError } from '../../shared/errors/custom.error.js';
+import { BadRequestError, ConflictError, NotFoundError } from '../../shared/errors/custom.error.js';
 import { crearProductoPaypal, crearPlanBillingPaypal } from '../suscripcion/paypal.client.js';
 import type { crearPlanSchema, actualizarPlanSchema } from './admin-plan.schema.js';
 import type { Plan } from '@prisma/client';
@@ -70,6 +70,10 @@ export class AdminPlanService {
     }
     if (plan.paypalPlanId) {
       throw new ConflictError('Este plan ya tiene un paypalPlanId vinculado a PayPal.');
+    }
+
+    if (Number(plan.precioMensual) <= 0) {
+      throw new BadRequestError('No se puede sincronizar con PayPal un plan con precio de 0. Los planes gratuitos no requieren vinculación a pasarelas de pago.');
     }
 
     const producto = await crearProductoPaypal({
