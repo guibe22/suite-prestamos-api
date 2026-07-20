@@ -5,6 +5,11 @@
  * schema. Postgres no puede convertir esos valores solo, así que hay que
  * remaparlos a 'MANUAL' a mano antes del push.
  *
+ * El enum lo usan DOS tablas (Suscripcion y SuscripcionEvento — el historial
+ * de webhooks, que suele tener muchas más filas viejas de PayPal que
+ * Suscripcion). Postgres no deja alterar el enum mientras CUALQUIERA de las
+ * dos tenga un valor inválido, así que este script revisa y arregla ambas.
+ *
  * Uso:
  *   npx tsx src/scripts/migrar-proveedor-pago.ts                 → solo diagnostica, no cambia nada
  *   npx tsx src/scripts/migrar-proveedor-pago.ts --apply         → aplica el remapeo (rechaza si hay alguna ACTIVA)
@@ -33,6 +38,11 @@ interface FilaAfectada {
   periodoFinEn: Date | null;
 }
 
+interface ConteoEventos {
+  proveedor: string;
+  total: bigint;
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const aplicar = args.includes('--apply');
@@ -49,40 +59,64 @@ async function main() {
     WHERE s.proveedor::text IN ('PAYPAL', 'GOOGLE_PLAY')
   `;
 
-  if (afectadas.length === 0) {
+  const conteoEventos = await prisma.$queryRaw<ConteoEventos[]>`
+    SELECT proveedor::text, COUNT(*) AS total
+    FROM "SuscripcionEvento"
+    WHERE proveedor::text IN ('PAYPAL', 'GOOGLE_PLAY')
+    GROUP BY proveedor
+  `;
+  const totalEventos = conteoEventos.reduce((acc, c) => acc + Number(c.total), 0);
+
+  if (afectadas.length === 0 && totalEventos === 0) {
     console.log('✅ No hay filas con proveedor PAYPAL/GOOGLE_PLAY — ya puedes correr `prisma db push --accept-data-loss` sin problema.');
     return;
   }
 
-  console.log(`⚠️  ${afectadas.length} fila(s) con un proveedor que ya no existe en el schema:\n`);
-  for (const fila of afectadas) {
-    console.log(
-      `  - ${fila.nombre} (org ${fila.organizacionId}) — proveedor=${fila.proveedor} estado=${fila.estado} periodoFinEn=${fila.periodoFinEn?.toISOString() ?? '—'}`
-    );
+  if (afectadas.length > 0) {
+    console.log(`⚠️  ${afectadas.length} suscripción(es) con un proveedor que ya no existe en el schema:\n`);
+    for (const fila of afectadas) {
+      console.log(
+        `  - ${fila.nombre} (org ${fila.organizacionId}) — proveedor=${fila.proveedor} estado=${fila.estado} periodoFinEn=${fila.periodoFinEn?.toISOString() ?? '—'}`
+      );
+    }
+    console.log();
+  }
+
+  if (totalEventos > 0) {
+    console.log(`⚠️  ${totalEventos} evento(s) históricos en SuscripcionEvento con ese proveedor (auditoría de webhooks):`);
+    for (const c of conteoEventos) {
+      console.log(`  - proveedor=${c.proveedor}: ${c.total} evento(s)`);
+    }
+    console.log();
   }
 
   const hayActivas = afectadas.some((f) => f.estado === 'ACTIVA');
   if (hayActivas && !forzar) {
     console.log(
-      '\n🛑 Al menos una de estas suscripciones está ACTIVA — podría ser un cliente real que sí llegó a pagar por PayPal.' +
-        '\n   Revísalas antes de continuar. Si igual quieres remapearlas todas a MANUAL, corre con --apply --force.'
+      '🛑 Al menos una de estas suscripciones está ACTIVA — podría ser un cliente real que sí llegó a pagar por PayPal.' +
+        '\n   Revísala antes de continuar. Si igual quieres remapear todo a MANUAL, corre con --apply --force.'
     );
     process.exitCode = 1;
     return;
   }
 
   if (!aplicar) {
-    console.log('\nEsto fue solo diagnóstico — nada se modificó. Corre con --apply para remapear estas filas a MANUAL.');
+    console.log('Esto fue solo diagnóstico — nada se modificó. Corre con --apply para remapear todo a MANUAL.');
     return;
   }
 
-  const resultado = await prisma.$executeRaw`
+  const resultadoSuscripcion = await prisma.$executeRaw`
     UPDATE "Suscripcion"
     SET proveedor = 'MANUAL'
     WHERE proveedor::text IN ('PAYPAL', 'GOOGLE_PLAY')
   `;
+  const resultadoEventos = await prisma.$executeRaw`
+    UPDATE "SuscripcionEvento"
+    SET proveedor = 'MANUAL'
+    WHERE proveedor::text IN ('PAYPAL', 'GOOGLE_PLAY')
+  `;
 
-  console.log(`\n✅ ${resultado} fila(s) remapeadas a proveedor=MANUAL.`);
+  console.log(`✅ ${resultadoSuscripcion} suscripción(es) y ${resultadoEventos} evento(s) remapeados a proveedor=MANUAL.`);
   console.log('   Ahora sí puedes correr: npx prisma db push --accept-data-loss');
 }
 
