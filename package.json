@@ -17,7 +17,8 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
-    "create-superadmin": "tsx src/scripts/create-superadmin.ts"
+    "create-superadmin": "tsx src/scripts/create-superadmin.ts",
+    "migrar-proveedor-pago": "tsx src/scripts/migrar-proveedor-pago.ts"
   },
   "keywords": [
     "suite",
