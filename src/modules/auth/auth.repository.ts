@@ -1,6 +1,5 @@
 import { prisma } from '../../config/database.js';
 import { logger } from '../../config/logger.js';
-import { TRIAL_DIAS } from '../suscripcion/suscripcion.constants.js';
 import type { RegisterInput } from './auth.types.js';
 
 export class AuthRepository {
@@ -130,7 +129,7 @@ export class AuthRepository {
             planId: planPredeterminado.id,
             proveedor: 'MANUAL',
             estado: 'TRIAL',
-            trialTerminaEn: new Date(Date.now() + TRIAL_DIAS * 24 * 60 * 60 * 1000),
+            trialTerminaEn: new Date(Date.now() + planPredeterminado.diasTrial * 24 * 60 * 60 * 1000),
           },
         });
       } else {

@@ -138,6 +138,15 @@ async function main() {
   }
   console.log('✅ Planes de suscripción creados o actualizados.');
 
+  // Ajustes globales del sistema (fila singleton) — enforcement apagado por
+  // defecto, se activa desde el panel admin cuando esté listo.
+  await prisma.configuracionSistema.upsert({
+    where: { id: 'default' },
+    update: {},
+    create: { id: 'default' },
+  });
+  console.log('✅ Configuración del sistema inicializada.');
+
   console.log('🏁 Proceso de siembra finalizado con éxito.');
 }
 

@@ -1,4 +1,5 @@
 import { prisma } from '../../config/database.js';
+import { env } from '../../config/env.js';
 import { ForbiddenError, NotFoundError } from '../../shared/errors/custom.error.js';
 import type { EventoRevenueCat } from './revenuecat.client.js';
 import type { ProveedorPago } from '@prisma/client';
@@ -24,6 +25,15 @@ function fechaDesdeMs(ms: number | null | undefined): Date | undefined {
 }
 
 export class SuscripcionService {
+  /**
+   * Config pública que el cliente necesita para inicializar el SDK de
+   * RevenueCat. La key vive del lado servidor (no EXPO_PUBLIC_*) para que
+   * rotarla no requiera un build nuevo de la app — ver env.REVENUECAT_ANDROID_API_KEY.
+   */
+  obtenerConfigCliente() {
+    return { revenueCatApiKey: env.REVENUECAT_ANDROID_API_KEY ?? null };
+  }
+
   async obtenerMiSuscripcion(organizacionId: string) {
     const suscripcion = await prisma.suscripcion.findUnique({
       where: { organizacionId },
@@ -66,7 +76,7 @@ export class SuscripcionService {
       precioMensual: Number(plan.precioMensual),
       moneda: plan.moneda,
       limites: plan.limites,
-      revenueCatDisponible: !!plan.revenueCatEntitlementId,
+      revenueCatEntitlementId: plan.revenueCatEntitlementId,
     }));
   }
 

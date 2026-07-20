@@ -20,6 +20,7 @@ import { sincronizacionRoutes } from '../modules/sincronizacion/index.js';
 import { notificacionRoutes } from '../modules/notificacion/index.js';
 import { suscripcionRoutes } from '../modules/suscripcion/index.js';
 import { adminPlanRoutes } from '../modules/admin-plan/index.js';
+import { adminOrganizacionRoutes } from '../modules/admin-organizacion/index.js';
 
 const router = Router();
 
@@ -45,5 +46,6 @@ router.use('/sincronizacion', sincronizacionRoutes);
 router.use('/notificacion', notificacionRoutes);
 router.use('/suscripcion', suscripcionRoutes);
 router.use('/admin/planes', adminPlanRoutes);
+router.use('/admin/organizaciones', adminOrganizacionRoutes);
 
 export default router;

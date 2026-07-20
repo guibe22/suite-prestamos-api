@@ -34,6 +34,15 @@ export class SuscripcionController {
     }
   };
 
+  config = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const resultado = this.suscripcionService.obtenerConfigCliente();
+      sendSuccess(res, 'Configuración de cliente recuperada con éxito.', resultado);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   /** Llamada externa de RevenueCat: sin authMiddleware, autenticada por el header Authorization. */
   revenuecatWebhook = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {

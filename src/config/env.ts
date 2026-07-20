@@ -18,17 +18,19 @@ const envSchema = z.object({
   // Orígenes permitidos para CORS (separados por coma). Requerido en producción.
   CORS_ORIGINS: z.string().optional(),
 
-  // Suscripciones / monetización. Opcional en dev igual que RESEND_API_KEY:
-  // si no están configuradas, requireActiveSubscription() deja pasar todo
-  // (bypass explícito de desarrollo, con warning al arrancar).
-  SUBSCRIPTIONS_ENFORCEMENT_ENABLED: z
-    .enum(['true', 'false'])
-    .default('false')
-    .transform((v) => v === 'true'),
+  // Suscripciones / monetización.
+  // El enforcement (bloquear o no según el estado de la suscripción) ya NO
+  // vive aquí: es un toggle en la tabla ConfiguracionSistema, editable desde
+  // el panel admin sin redeploy (ver modules/configuracion).
+  //
   // Secreto configurado al crear el webhook en el dashboard de RevenueCat
   // (Project settings > Integrations > Webhooks) — RevenueCat lo manda en el
   // header Authorization de cada request.
   REVENUECAT_WEBHOOK_SECRET: z.string().optional(),
+  // API key pública de Android de RevenueCat. Vive en el servidor (no en
+  // EXPO_PUBLIC_*) para que rotarla no requiera un build nuevo de la app: el
+  // cliente la pide en caliente vía GET /suscripcion/config.
+  REVENUECAT_ANDROID_API_KEY: z.string().optional(),
 })
   .refine((e) => e.NODE_ENV !== 'production' || !/change-me/i.test(e.JWT_SECRET), {
     message: 'JWT_SECRET no puede ser el valor placeholder en producción.',

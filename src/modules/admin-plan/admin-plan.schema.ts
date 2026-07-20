@@ -21,6 +21,7 @@ export const crearPlanSchema = z.object({
   moneda: z.string().min(1).default('USD'),
   limites: limitesSchema,
   revenueCatEntitlementId: z.string().trim().optional(),
+  diasTrial: z.number().int().positive().default(14),
   esPredeterminado: z.boolean().default(false),
   activo: z.boolean().default(false),
   orden: z.number().int().default(0),

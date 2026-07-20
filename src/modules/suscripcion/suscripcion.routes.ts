@@ -35,6 +35,20 @@ router.get('/planes', authMiddleware, controller.planes);
 
 /**
  * @swagger
+ * /suscripcion/config:
+ *   get:
+ *     summary: Config pública para inicializar el SDK de RevenueCat en el cliente
+ *     tags: [Suscripcion]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: API key pública de RevenueCat (o null si no está configurada)
+ */
+router.get('/config', authMiddleware, controller.config);
+
+/**
+ * @swagger
  * /suscripcion/revenuecat/webhook:
  *   post:
  *     summary: Receptor de eventos de RevenueCat (autenticado por header Authorization, no por JWT)

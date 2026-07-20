@@ -1,23 +1,25 @@
 import type { Request, Response, NextFunction } from 'express';
-import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import { SuscripcionService } from '../modules/suscripcion/suscripcion.service.js';
+import { ConfiguracionService } from '../modules/configuracion/configuracion.service.js';
 import { ForbiddenError, UnauthorizedError } from '../shared/errors/custom.error.js';
 
 const suscripcionService = new SuscripcionService();
+const configuracionService = new ConfiguracionService();
 
 /**
  * Bloquea escrituras que hacen crecer el uso (sync push, invitar miembro del
  * equipo) cuando la suscripción de la organización no está en TRIAL vigente
  * ni ACTIVA. Se ejecuta después de authMiddleware y antes de checkRole.
  *
- * Detrás de SUBSCRIPTIONS_ENFORCEMENT_ENABLED=false (default) deja pasar todo
- * sin consultar la base — así se puede mergear y desplegar sin afectar a
- * nadie hasta activarlo por ambiente.
+ * El enforcement en sí es un toggle en ConfiguracionSistema (editable desde
+ * el panel admin, SUPER_ADMIN > Ajustes) — en false (default) deja pasar todo
+ * sin bloquear a nadie hasta que se active explícitamente.
  */
 export const requireActiveSubscription = () => {
   return async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
-    if (!env.SUBSCRIPTIONS_ENFORCEMENT_ENABLED) {
+    const enforcementActivo = await configuracionService.suscripcionesEnforcementEnabled();
+    if (!enforcementActivo) {
       next();
       return;
     }

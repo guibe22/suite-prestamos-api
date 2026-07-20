@@ -67,6 +67,10 @@ model Plan {
   activo           Boolean @default(true)
   orden            Int     @default(0)
 
+  /// Duración del trial (en días) cuando este plan es el predeterminado —
+  /// editable desde el panel admin, sin tocar código (ver TRIAL_DIAS legado).
+  diasTrial Int @default(14)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -85,6 +89,20 @@ enum EstadoSuscripcion {
 enum ProveedorPago {
   REVENUE_CAT
   MANUAL
+}
+
+/// Fila única (singleton, id fijo "default") con ajustes globales del
+/// sistema editables desde el panel admin — evita que "prender" el
+/// enforcement de suscripciones requiera una variable de entorno + redeploy.
+model ConfiguracionSistema {
+  id String @id @default("default")
+
+  /// Si es false (default), requireActiveSubscription() deja pasar todo sin
+  /// bloquear a nadie — mismo comportamiento que el SUBSCRIPTIONS_ENFORCEMENT_ENABLED
+  /// original, ahora editable en caliente desde Ajustes del sistema.
+  suscripcionesEnforcementEnabled Boolean @default(false)
+
+  updatedAt DateTime @updatedAt
 }
 
 model Suscripcion {
