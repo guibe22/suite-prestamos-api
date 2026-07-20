@@ -1,6 +1,5 @@
 import { prisma } from '../../config/database.js';
-import { BadRequestError, ConflictError, NotFoundError } from '../../shared/errors/custom.error.js';
-import { crearProductoPaypal, crearPlanBillingPaypal } from '../suscripcion/paypal.client.js';
+import { ConflictError, NotFoundError } from '../../shared/errors/custom.error.js';
 import type { crearPlanSchema, actualizarPlanSchema } from './admin-plan.schema.js';
 import type { Plan } from '@prisma/client';
 import type { z } from 'zod';
@@ -55,39 +54,5 @@ export class AdminPlanService {
       return tx.plan.update({ where: { id }, data });
     });
     return this.toResponse(plan);
-  }
-
-  /**
-   * Automatiza lo que antes se hacía a mano por PowerShell: crea el producto
-   * y el billing plan mensual en PayPal, y guarda el paypalPlanId resultante.
-   * Rechaza si el plan ya tiene uno vinculado (evita duplicar en PayPal por
-   * doble click).
-   */
-  async generarEnPaypal(id: string) {
-    const plan = await prisma.plan.findUnique({ where: { id } });
-    if (!plan) {
-      throw new NotFoundError('El plan no existe.');
-    }
-    if (plan.paypalPlanId) {
-      throw new ConflictError('Este plan ya tiene un paypalPlanId vinculado a PayPal.');
-    }
-
-    if (Number(plan.precioMensual) <= 0) {
-      throw new BadRequestError('No se puede sincronizar con PayPal un plan con precio de 0. Los planes gratuitos no requieren vinculación a pasarelas de pago.');
-    }
-
-    const producto = await crearProductoPaypal({
-      nombre: plan.nombre,
-      descripcion: plan.descripcion ?? undefined,
-    });
-    const planBilling = await crearPlanBillingPaypal({
-      productId: producto.id,
-      nombre: `${plan.nombre} Mensual`,
-      precioMensual: Number(plan.precioMensual),
-      moneda: plan.moneda,
-    });
-
-    const actualizado = await prisma.plan.update({ where: { id }, data: { paypalPlanId: planBilling.id } });
-    return this.toResponse(actualizado);
   }
 }

@@ -20,6 +20,7 @@ export const crearPlanSchema = z.object({
   precioMensual: z.number().nonnegative('El precio no puede ser negativo.'),
   moneda: z.string().min(1).default('USD'),
   limites: limitesSchema,
+  revenueCatEntitlementId: z.string().trim().optional(),
   esPredeterminado: z.boolean().default(false),
   activo: z.boolean().default(false),
   orden: z.number().int().default(0),

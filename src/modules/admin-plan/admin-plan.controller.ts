@@ -31,13 +31,4 @@ export class AdminPlanController {
       next(error);
     }
   };
-
-  generarEnPaypal = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const plan = await this.service.generarEnPaypal(req.params.id);
-      sendSuccess(res, 'Plan generado en PayPal con éxito.', plan);
-    } catch (error) {
-      next(error);
-    }
-  };
 }

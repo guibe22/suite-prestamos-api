@@ -1,7 +1,6 @@
 import { prisma } from '../../config/database.js';
-import { BadRequestError, ForbiddenError, NotFoundError } from '../../shared/errors/custom.error.js';
-import { crearSuscripcion as crearSuscripcionPaypal } from './paypal.client.js';
-import { verificarCompraGoogle as verificarCompraGoogleApi } from './google-play.client.js';
+import { ForbiddenError, NotFoundError } from '../../shared/errors/custom.error.js';
+import type { EventoRevenueCat } from './revenuecat.client.js';
 import type { ProveedorPago } from '@prisma/client';
 
 export type RecursoLimitado = 'usuarios' | 'clientes' | 'rutas' | 'prestamosActivos';
@@ -19,6 +18,10 @@ const ETIQUETA_RECURSO: Record<RecursoLimitado, string> = {
   rutas: 'rutas',
   prestamosActivos: 'préstamos activos',
 };
+
+function fechaDesdeMs(ms: number | null | undefined): Date | undefined {
+  return typeof ms === 'number' ? new Date(ms) : undefined;
+}
 
 export class SuscripcionService {
   async obtenerMiSuscripcion(organizacionId: string) {
@@ -63,8 +66,7 @@ export class SuscripcionService {
       precioMensual: Number(plan.precioMensual),
       moneda: plan.moneda,
       limites: plan.limites,
-      paypalDisponible: !!plan.paypalPlanId,
-      googleDisponible: !!plan.googleProductId,
+      revenueCatDisponible: !!plan.revenueCatEntitlementId,
     }));
   }
 
@@ -121,97 +123,93 @@ export class SuscripcionService {
     return false;
   }
 
-  /** Crea la suscripción en PayPal para el plan indicado y la vincula a la organización. */
-  async iniciarSuscripcionPaypal(
-    organizacionId: string,
-    planId: string,
-    returnUrl: string,
-    cancelUrl: string,
-  ): Promise<{ approveUrl: string }> {
-    const plan = await prisma.plan.findUnique({ where: { id: planId } });
-    if (!plan || !plan.activo) {
-      throw new NotFoundError('El plan solicitado no existe o no está disponible.');
-    }
-    if (!plan.paypalPlanId) {
-      throw new BadRequestError('Este plan todavía no tiene configurado un paypalPlanId.');
-    }
-
-    const { id: paypalSubscriptionId, approveUrl } = await crearSuscripcionPaypal({
-      paypalPlanId: plan.paypalPlanId,
-      returnUrl,
-      cancelUrl,
-    });
-
-    // Queda en PENDIENTE_PAGO hasta que el webhook confirme la activación
-    // (BILLING.SUBSCRIPTION.ACTIVATED) tras la aprobación del usuario en PayPal.
-    await prisma.suscripcion.update({
-      where: { organizacionId },
-      data: {
-        planId: plan.id,
-        proveedor: 'PAYPAL',
-        estado: 'PENDIENTE_PAGO',
-        paypalSubscriptionId,
-      },
-    });
-
-    return { approveUrl };
-  }
-
-  /** Aplica un evento de webhook de PayPal (ya verificado) de forma idempotente. */
-  async procesarEventoPaypal(evento: { id: string; event_type: string; resource?: any }): Promise<void> {
-    const paypalSubscriptionId: string | undefined =
-      evento.resource?.id ?? evento.resource?.billing_agreement_id;
-    const suscripcion = paypalSubscriptionId
-      ? await prisma.suscripcion.findUnique({ where: { paypalSubscriptionId } })
-      : null;
+  /**
+   * Aplica un evento de webhook de RevenueCat (ya autenticado) de forma
+   * idempotente. La compra en sí (Android o Web) ocurre enteramente dentro
+   * del SDK de RevenueCat en el cliente — este webhook es la única forma en
+   * que el backend se entera de altas, renovaciones y cancelaciones.
+   *
+   * El SDK se configura con `Purchases.configure({ appUserID: organizacionId })`,
+   * así que `evento.app_user_id` ya es directamente el organizacionId: no hace
+   * falta una tabla puente para mapear un id externo al tenant.
+   */
+  async procesarEventoRevenueCat(evento: EventoRevenueCat): Promise<void> {
+    const organizacionId = evento.app_user_id;
+    const suscripcion = await prisma.suscripcion.findUnique({ where: { organizacionId } });
 
     await this.registrarEventoIdempotente({
-      proveedor: 'PAYPAL',
+      proveedor: 'REVENUE_CAT',
       externalEventId: evento.id,
-      tipo: evento.event_type,
+      tipo: evento.type,
       payload: evento,
       suscripcionId: suscripcion?.id,
       aplicar: async () => {
-        // Evento de una suscripción que no reconocemos (de otra integración,
-        // o llegó antes de que /paypal/iniciar terminara de persistir) — se
-        // registra para auditoría pero no hay nada que actualizar.
+        // Organización que no reconocemos (id mal configurado en el cliente,
+        // o el evento llegó de un ambiente de pruebas) — se registra para
+        // auditoría pero no hay nada que actualizar.
         if (!suscripcion) return;
 
-        switch (evento.event_type) {
-          case 'BILLING.SUBSCRIPTION.ACTIVATED':
+        const entitlementId = evento.entitlement_ids?.[0];
+        const plan = entitlementId
+          ? await prisma.plan.findFirst({ where: { revenueCatEntitlementId: entitlementId } })
+          : null;
+
+        const periodoFinEn = fechaDesdeMs(evento.expiration_at_ms);
+        const base = plan ? { planId: plan.id } : {};
+
+        switch (evento.type) {
+          case 'INITIAL_PURCHASE':
             await prisma.suscripcion.update({
               where: { id: suscripcion.id },
-              data: { estado: 'ACTIVA', periodoInicioEn: new Date(), ultimoPagoEn: new Date() },
+              data: {
+                ...base,
+                estado: 'ACTIVA',
+                periodoInicioEn: fechaDesdeMs(evento.purchased_at_ms) ?? new Date(),
+                periodoFinEn,
+                ultimoPagoEn: new Date(),
+              },
             });
             break;
-          case 'PAYMENT.SALE.COMPLETED':
+          case 'RENEWAL':
+          case 'NON_RENEWING_PURCHASE':
+          case 'PRODUCT_CHANGE':
             await prisma.suscripcion.update({
               where: { id: suscripcion.id },
-              data: { estado: 'ACTIVA', ultimoPagoEn: new Date() },
+              data: { ...base, estado: 'ACTIVA', periodoFinEn, ultimoPagoEn: new Date() },
             });
             break;
-          case 'BILLING.SUBSCRIPTION.CANCELLED':
+          case 'UNCANCELLATION':
+            // El usuario reactivó el auto-renovado antes de que expirara: no
+            // hubo cobro nuevo, solo se limpia la marca de cancelación.
             await prisma.suscripcion.update({
               where: { id: suscripcion.id },
-              data: { estado: 'CANCELADA', canceladaEn: new Date() },
+              data: { ...base, estado: 'ACTIVA', periodoFinEn, canceladaEn: null },
             });
             break;
-          case 'BILLING.SUBSCRIPTION.SUSPENDED':
-          case 'BILLING.SUBSCRIPTION.PAYMENT.FAILED':
+          case 'CANCELLATION':
+            // El usuario apagó el auto-renovado: el acceso sigue vivo hasta
+            // `periodoFinEn` — el estado solo cambia cuando llegue EXPIRATION.
+            await prisma.suscripcion.update({
+              where: { id: suscripcion.id },
+              data: { canceladaEn: new Date() },
+            });
+            break;
+          case 'EXPIRATION':
+            await prisma.suscripcion.update({
+              where: { id: suscripcion.id },
+              data: { estado: 'EXPIRADA', periodoFinEn: periodoFinEn ?? new Date() },
+            });
+            break;
+          case 'BILLING_ISSUE':
+          case 'SUBSCRIPTION_PAUSED':
             await prisma.suscripcion.update({
               where: { id: suscripcion.id },
               data: { estado: 'SUSPENDIDA' },
             });
             break;
-          case 'BILLING.SUBSCRIPTION.EXPIRED':
-            await prisma.suscripcion.update({
-              where: { id: suscripcion.id },
-              data: { estado: 'EXPIRADA' },
-            });
-            break;
           default:
-            // Otros eventos (UPDATED, RE-ACTIVATED, etc.): quedan en
-            // SuscripcionEvento para auditoría, sin cambio de estado aún.
+            // TRANSFER, TEST u otros tipos nuevos que RevenueCat agregue:
+            // quedan en SuscripcionEvento para auditoría, sin cambio de estado.
             break;
         }
       },
@@ -219,81 +217,9 @@ export class SuscripcionService {
   }
 
   /**
-   * El app envía purchaseToken+productId tras completar una compra de Play
-   * Billing; se verifica contra la Developer API y se persiste la entitlement.
-   */
-  async verificarCompraGoogle(
-    organizacionId: string,
-    purchaseToken: string,
-    productId: string,
-  ): Promise<{ estado: string }> {
-    const plan = await prisma.plan.findFirst({ where: { googleProductId: productId, activo: true } });
-    if (!plan) {
-      throw new NotFoundError('No se encontró un plan activo asociado a este producto de Google Play.');
-    }
-
-    const compra = await verificarCompraGoogleApi(purchaseToken);
-
-    await prisma.suscripcion.update({
-      where: { organizacionId },
-      data: {
-        planId: plan.id,
-        proveedor: 'GOOGLE_PLAY',
-        estado: compra.estado,
-        googlePurchaseToken: purchaseToken,
-        googleOrderId: compra.latestOrderId,
-        periodoFinEn: compra.expiryTime,
-        ...(compra.estado === 'ACTIVA' ? { ultimoPagoEn: new Date() } : {}),
-      },
-    });
-
-    return { estado: compra.estado };
-  }
-
-  /**
-   * Aplica una notificación RTDN de Google (ya decodificada) de forma
-   * idempotente: siempre re-verifica la verdad contra la Developer API antes
-   * de actualizar, en vez de confiar en el contenido del push.
-   */
-  async procesarNotificacionGoogle(
-    messageId: string,
-    purchaseToken: string,
-    notificationType: number,
-  ): Promise<void> {
-    const suscripcion = await prisma.suscripcion.findUnique({ where: { googlePurchaseToken: purchaseToken } });
-
-    await this.registrarEventoIdempotente({
-      proveedor: 'GOOGLE_PLAY',
-      externalEventId: messageId,
-      tipo: `RTDN_${notificationType}`,
-      payload: { purchaseToken, notificationType },
-      suscripcionId: suscripcion?.id,
-      aplicar: async () => {
-        // Token que todavía no vinculamos a ninguna organización (p.ej. el
-        // push llegó antes de que /google/verificar-compra terminara) — se
-        // registra para auditoría, sin nada que actualizar todavía.
-        if (!suscripcion) return;
-
-        const compra = await verificarCompraGoogleApi(purchaseToken);
-        await prisma.suscripcion.update({
-          where: { id: suscripcion.id },
-          data: {
-            estado: compra.estado,
-            googlePurchaseToken: purchaseToken,
-            googleOrderId: compra.latestOrderId ?? suscripcion.googleOrderId,
-            periodoFinEn: compra.expiryTime,
-            ...(compra.estado === 'ACTIVA' ? { ultimoPagoEn: new Date() } : {}),
-          },
-        });
-      },
-    });
-  }
-
-  /**
    * Registra un evento externo de forma idempotente antes de aplicarlo: si
-   * `externalEventId` ya fue procesado (reintento de webhook de PayPal o
-   * entrega "at-least-once" de Pub/Sub de Google), `aplicar` no se vuelve a
-   * ejecutar.
+   * `externalEventId` ya fue procesado (RevenueCat reintenta webhooks que no
+   * respondieron 2xx), `aplicar` no se vuelve a ejecutar.
    */
   async registrarEventoIdempotente(params: {
     proveedor: ProveedorPago;

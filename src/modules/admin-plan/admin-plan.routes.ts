@@ -61,24 +61,4 @@ router.post('/', validate({ body: crearPlanSchema }), controller.crear);
  */
 router.patch('/:id', validate({ params: idParamSchema, body: actualizarPlanSchema }), controller.actualizar);
 
-/**
- * @swagger
- * /admin/planes/{id}/generar-paypal:
- *   post:
- *     summary: Crea el producto y billing plan en PayPal para este plan y guarda el paypalPlanId — solo SUPER_ADMIN
- *     tags: [AdminPlan]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Plan vinculado a PayPal
- */
-router.post('/:id/generar-paypal', validate({ params: idParamSchema }), controller.generarEnPaypal);
-
 export default router;

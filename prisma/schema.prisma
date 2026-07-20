@@ -56,10 +56,10 @@ model Plan {
   /// { "maxUsuarios": 5, "maxClientes": 500, "maxRutas": 10 }
   limites Json
 
-  // IDs del catálogo de cada proveedor externo, para mapear este plan a
-  // su contraparte en PayPal (billing plan) y Google Play (producto base).
-  paypalPlanId    String?
-  googleProductId String?
+  // Identificador del Entitlement configurado en el dashboard de RevenueCat
+  // (p.ej. "pro") al que este plan corresponde — RevenueCat mapea productos
+  // de Play Store/App Store/Stripe a este mismo entitlement.
+  revenueCatEntitlementId String?
 
   /// Plan que se asigna automáticamente al crear una organización nueva
   /// (arranca en TRIAL sobre este plan). Debe haber como máximo uno activo.
@@ -83,8 +83,7 @@ enum EstadoSuscripcion {
 }
 
 enum ProveedorPago {
-  PAYPAL
-  GOOGLE_PLAY
+  REVENUE_CAT
   MANUAL
 }
 
@@ -98,13 +97,6 @@ model Suscripcion {
 
   proveedor ProveedorPago
   estado    EstadoSuscripcion @default(TRIAL)
-
-  // Identificadores externos (el que corresponda según `proveedor`).
-  paypalSubscriptionId String? @unique
-  // Los tokens de compra de Google rotan en cada renovación/upgrade; este es
-  // siempre el último conocido.
-  googlePurchaseToken  String? @unique
-  googleOrderId        String?
 
   trialTerminaEn  DateTime?
   periodoInicioEn DateTime?
@@ -123,9 +115,9 @@ model Suscripcion {
 }
 
 /// Auditoría + idempotencia de webhooks: cada evento externo procesado se
-/// registra por su ID único (evento de PayPal o messageId de Pub/Sub de
-/// Google) para que los reintentos (PayPal reenvía, Google Pub/Sub entrega
-/// "at-least-once") no dupliquen efectos sobre la suscripción.
+/// registra por su ID único (`event.id` de RevenueCat) para que los
+/// reintentos (RevenueCat reenvía si el webhook no respondió 2xx) no
+/// dupliquen efectos sobre la suscripción.
 model SuscripcionEvento {
   id            String       @id @default(uuid())
   suscripcionId String?

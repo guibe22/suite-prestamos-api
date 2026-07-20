@@ -72,7 +72,9 @@ async function main() {
         contratoPersonalizado: true,
         soportePrioritario: false,
       },
-      paypalPlanId: 'P-85V81686YU9230029NJMOYMA',
+      // Debe coincidir con el identificador del Entitlement creado en el
+      // dashboard de RevenueCat para este plan.
+      revenueCatEntitlementId: 'basico',
       esPredeterminado: false,
       activo: true,
       orden: 1,
@@ -92,7 +94,7 @@ async function main() {
         contratoPersonalizado: true,
         soportePrioritario: true,
       },
-      paypalPlanId: 'P-835600520J3052705NJMPYSI',
+      revenueCatEntitlementId: 'pro',
       esPredeterminado: false,
       activo: true,
       orden: 2,
@@ -126,7 +128,7 @@ async function main() {
         descripcion: plan.descripcion,
         precioMensual: plan.precioMensual,
         limites: plan.limites,
-        paypalPlanId: (plan as { paypalPlanId?: string }).paypalPlanId,
+        revenueCatEntitlementId: (plan as { revenueCatEntitlementId?: string }).revenueCatEntitlementId,
         esPredeterminado: plan.esPredeterminado,
         activo: plan.activo,
         orden: plan.orden,
