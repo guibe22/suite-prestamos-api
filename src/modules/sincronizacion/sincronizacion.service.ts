@@ -585,20 +585,9 @@ export class SincronizacionService {
       return;
     }
 
-    // Límites del plan: se verifica ANTES de escribir nada, para rechazar el
-    // push completo si excede el plan en vez de aplicar parcialmente.
     const nuevosClientes = changes.clientes?.created?.length ?? 0;
     const nuevasRutas = changes.rutas?.created?.length ?? 0;
     const nuevosPrestamos = changes.prestamos?.created?.length ?? 0;
-    if (nuevosClientes > 0) {
-      await this.suscripcionService.verificarLimite(organizacionId, 'clientes', nuevosClientes);
-    }
-    if (nuevasRutas > 0) {
-      await this.suscripcionService.verificarLimite(organizacionId, 'rutas', nuevasRutas);
-    }
-    if (nuevosPrestamos > 0) {
-      await this.suscripcionService.verificarLimite(organizacionId, 'prestamosActivos', nuevosPrestamos);
-    }
 
     // Definimos el orden de las operaciones para evitar problemas de FK.
     // rutas va ANTES que clientes: Cliente.rutaId es FK obligatoria, así que
@@ -620,6 +609,26 @@ export class SincronizacionService {
 
     // Ejecutamos todo dentro de una transaccion de Prisma
     await prisma.$transaction(async (tx) => {
+      // Serializa los pushes concurrentes de la MISMA organización (ej. dos
+      // dispositivos syncando a la vez): sin este lock, ambos podrían leer el
+      // mismo conteo de uso antes de que ninguno hubiera insertado nada, y
+      // pasar el límite del plan aunque juntos lo excedan. Se libera solo al
+      // terminar la transacción (commit o rollback), no hace falta soltarlo a mano.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${organizacionId})::bigint)`;
+
+      // Límites del plan: se verifica ANTES de escribir nada (y ya con el lock
+      // tomado), para rechazar el push completo si excede el plan en vez de
+      // aplicar parcialmente.
+      if (nuevosClientes > 0) {
+        await this.suscripcionService.verificarLimite(organizacionId, 'clientes', nuevosClientes, tx);
+      }
+      if (nuevasRutas > 0) {
+        await this.suscripcionService.verificarLimite(organizacionId, 'rutas', nuevasRutas, tx);
+      }
+      if (nuevosPrestamos > 0) {
+        await this.suscripcionService.verificarLimite(organizacionId, 'prestamosActivos', nuevosPrestamos, tx);
+      }
+
       // 1. Procesar Eliminaciones (de atrás hacia adelante en orden para evitar romper FKs en cascada)
       for (const table of [...tableOrder].reverse()) {
         // La organización no se elimina desde el cliente; los usuarios se

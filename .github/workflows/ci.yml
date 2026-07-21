@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      # Valores dummy — nunca los secretos reales. Alcanza porque nada en este
+      # job hace una consulta real: env.ts solo exige que tengan la forma correcta,
+      # y los tests mockean Prisma en vez de conectarse a una base de datos real.
+      NODE_ENV: test
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      JWT_SECRET: ci_only_dummy_jwt_secret_0123456789abcdef
+      JWT_REFRESH_SECRET: ci_only_dummy_refresh_secret_0123456789ab
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Generar cliente de Prisma
+        run: npx prisma generate
+
+      # El repo ya tenía ~42 errores de Biome antes de este workflow (deuda
+      # preexistente) — no se puede bloquear el merge con eso hoy sin antes
+      # limpiarlos. Queda visible pero sin bloquear; volver a bloquear cuando
+      # se resuelva esa deuda (quitar continue-on-error).
+      - name: Lint
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test

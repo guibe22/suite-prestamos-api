@@ -77,15 +77,16 @@ export class SuscripcionService {
       moneda: plan.moneda,
       limites: plan.limites,
       revenueCatEntitlementId: plan.revenueCatEntitlementId,
+      esPredeterminado: plan.esPredeterminado,
     }));
   }
 
-  async obtenerUsoActual(organizacionId: string) {
+  async obtenerUsoActual(organizacionId: string, db: Prisma.TransactionClient = prisma) {
     const [usuarios, clientes, rutas, prestamosActivos] = await Promise.all([
-      prisma.usuario.count({ where: { organizacionId, deletedAt: null } }),
-      prisma.cliente.count({ where: { organizacionId, deletedAt: null } }),
-      prisma.ruta.count({ where: { organizacionId, deletedAt: null } }),
-      prisma.prestamo.count({ where: { cliente: { organizacionId }, estado: 'ACTIVO', deletedAt: null } }),
+      db.usuario.count({ where: { organizacionId, deletedAt: null } }),
+      db.cliente.count({ where: { organizacionId, deletedAt: null } }),
+      db.ruta.count({ where: { organizacionId, deletedAt: null } }),
+      db.prestamo.count({ where: { cliente: { organizacionId }, estado: 'ACTIVO', deletedAt: null } }),
     ]);
     return { usuarios, clientes, rutas, prestamosActivos };
   }
@@ -94,11 +95,22 @@ export class SuscripcionService {
    * Lanza ForbiddenError si crear `incremento` recursos de este tipo
    * excedería el límite del plan activo. `null`/ausente en `plan.limites`
    * significa sin límite (plan Empresarial).
+   *
+   * El parámetro `db` opcional permite llamarlo dentro de la MISMA transacción
+   * (con lock) que hace las escrituras — ver `SincronizacionService.push()` —
+   * para que dos pushes concurrentes de la misma organización no lean el mismo
+   * conteo "actual" antes de que ninguno de los dos haya insertado nada, y
+   * ambos pasen el límite aunque juntos lo excedan.
    */
-  async verificarLimite(organizacionId: string, recurso: RecursoLimitado, incremento: number): Promise<void> {
+  async verificarLimite(
+    organizacionId: string,
+    recurso: RecursoLimitado,
+    incremento: number,
+    db: Prisma.TransactionClient = prisma
+  ): Promise<void> {
     if (incremento <= 0) return;
 
-    const suscripcion = await prisma.suscripcion.findUnique({
+    const suscripcion = await db.suscripcion.findUnique({
       where: { organizacionId },
       include: { plan: true },
     });
@@ -110,7 +122,7 @@ export class SuscripcionService {
     const limite = limites[CLAVE_LIMITE[recurso]];
     if (limite === null || limite === undefined) return;
 
-    const uso = await this.obtenerUsoActual(organizacionId);
+    const uso = await this.obtenerUsoActual(organizacionId, db);
     const actual = uso[recurso];
     if (actual + incremento > (limite as number)) {
       throw new ForbiddenError(

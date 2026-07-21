@@ -115,7 +115,7 @@ async function main() {
         soportePrioritario: true,
       },
       esPredeterminado: false,
-      activo: false,
+      activo: true,
       orden: 3,
     },
   ];
