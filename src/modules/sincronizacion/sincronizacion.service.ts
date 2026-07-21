@@ -1,6 +1,7 @@
 import { prisma } from '../../config/database.js';
 import { logger } from '../../config/logger.js';
 import { SuscripcionService } from '../suscripcion/suscripcion.service.js';
+import { ForbiddenError } from '../../shared/errors/custom.error.js';
 import type { PullResponse, WatermelonChanges } from './sincronizacion.types.js';
 
 export class SincronizacionService {
@@ -627,6 +628,28 @@ export class SincronizacionService {
       }
       if (nuevosPrestamos > 0) {
         await this.suscripcionService.verificarLimite(organizacionId, 'prestamosActivos', nuevosPrestamos, tx);
+      }
+
+      // No se puede eliminar una ruta que todavía tiene clientes asignados —
+      // Cliente.rutaId es una FK obligatoria, así que quedarían huérfanos
+      // (y el borrado lógico de la ruta es un updateMany, no un DELETE real,
+      // así que Postgres no lo bloquea solo por su cuenta). Se ignoran los
+      // clientes que el mismo push también está borrando a la vez.
+      const rutasAEliminar = changes.rutas?.deleted ?? [];
+      if (rutasAEliminar.length > 0) {
+        const clientesTambienBorrados = changes.clientes?.deleted ?? [];
+        const clientesHuerfanos = await tx.cliente.count({
+          where: {
+            rutaId: { in: rutasAEliminar },
+            deletedAt: null,
+            id: { notIn: clientesTambienBorrados },
+          },
+        });
+        if (clientesHuerfanos > 0) {
+          throw new ForbiddenError(
+            `No puedes eliminar una ruta que todavía tiene ${clientesHuerfanos} cliente(s) asignado(s). Reasígnalos a otra ruta o elimínalos primero.`
+          );
+        }
       }
 
       // 1. Procesar Eliminaciones (de atrás hacia adelante en orden para evitar romper FKs en cascada)
