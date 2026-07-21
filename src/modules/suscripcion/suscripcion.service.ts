@@ -171,9 +171,17 @@ export class SuscripcionService {
         // auditoría pero no hay nada que actualizar.
         if (!suscripcion) return;
 
-        const entitlementId = evento.entitlement_ids?.[0];
-        const plan = entitlementId
-          ? await tx.plan.findFirst({ where: { revenueCatEntitlementId: entitlementId } })
+        // RevenueCat no garantiza el orden de `entitlement_ids` — en vez de
+        // asumir que el primero es el correcto, se buscan TODOS los que
+        // coincidan con un plan conocido y, si más de uno matchea a la vez
+        // (ej. a mitad de un upgrade), se prefiere el de mayor `orden` (el
+        // plan más alto) en vez de uno arbitrario.
+        const entitlementIds = evento.entitlement_ids ?? [];
+        const plan = entitlementIds.length
+          ? await tx.plan.findFirst({
+              where: { revenueCatEntitlementId: { in: entitlementIds } },
+              orderBy: { orden: 'desc' },
+            })
           : null;
 
         const periodoFinEn = fechaDesdeMs(evento.expiration_at_ms);

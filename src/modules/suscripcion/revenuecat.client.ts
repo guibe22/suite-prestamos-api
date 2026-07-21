@@ -14,10 +14,11 @@ export function verificarAutorizacionWebhook(authHeader: string | undefined): bo
   }
   if (!authHeader) return false;
 
-  const esperado = Buffer.from(env.REVENUECAT_WEBHOOK_SECRET);
-  const recibido = Buffer.from(authHeader);
-  if (esperado.length !== recibido.length) return false;
-  return crypto.timingSafeEqual(esperado, recibido);
+  // Se compara el hash de cada valor (siempre 32 bytes), no el valor crudo —
+  // así ninguna rama depende de la longitud de `authHeader`, y timingSafeEqual
+  // nunca puede recibir buffers de tamaños distintos.
+  const hash = (valor: string) => crypto.createHash('sha256').update(valor, 'utf8').digest();
+  return crypto.timingSafeEqual(hash(env.REVENUECAT_WEBHOOK_SECRET), hash(authHeader));
 }
 
 /**

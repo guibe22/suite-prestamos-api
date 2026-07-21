@@ -89,4 +89,27 @@ describe('SuscripcionService.procesarEventoRevenueCat', () => {
     expect(mockTx.suscripcionEvento.create).toHaveBeenCalledTimes(1);
     expect(mockTx.suscripcion.update).not.toHaveBeenCalled();
   });
+
+  it(
+    'con varios entitlement_ids a la vez, busca CUALQUIERA que matchee un plan conocido ' +
+      '(no asume que el primero del arreglo es el correcto) y prefiere el de mayor `orden`',
+    async () => {
+      mockPrisma.suscripcion.findUnique.mockResolvedValue({ id: 'sub-1' });
+      mockTx.suscripcionEvento.create.mockResolvedValue({});
+      mockTx.suscripcion.update.mockResolvedValue({});
+      mockTx.plan.findFirst.mockResolvedValue({ id: 'plan-pro' });
+
+      await service.procesarEventoRevenueCat(eventoBase({ entitlement_ids: ['algo_desconocido', 'pro'] }));
+
+      expect(mockTx.plan.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { revenueCatEntitlementId: { in: ['algo_desconocido', 'pro'] } },
+          orderBy: { orden: 'desc' },
+        })
+      );
+      expect(mockTx.suscripcion.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ planId: 'plan-pro' }) })
+      );
+    }
+  );
 });
