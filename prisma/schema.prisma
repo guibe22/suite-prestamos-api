@@ -102,6 +102,12 @@ model ConfiguracionSistema {
   /// original, ahora editable en caliente desde Ajustes del sistema.
   suscripcionesEnforcementEnabled Boolean @default(false)
 
+  /// Versión mínima requerida de la app (ej. "1.2.0"), comparada contra
+  /// Constants.expoConfig.version en el cliente. Null = sin mínimo, no bloquea
+  /// a nadie. Se lee desde un endpoint público (sin auth) porque el chequeo
+  /// debe correr incluso antes de que el usuario inicie sesión.
+  minVersionApp String?
+
   updatedAt DateTime @updatedAt
 }
 

@@ -559,10 +559,3 @@ ALTER TABLE "jornadas_cobranza" ADD CONSTRAINT "jornadas_cobranza_usuarioId_fkey
 
 -- AddForeignKey
 ALTER TABLE "jornadas_cobranza" ADD CONSTRAINT "jornadas_cobranza_rutaId_fkey" FOREIGN KEY ("rutaId") REFERENCES "Ruta"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-┌─────────────────────────────────────────────────────────┐
-│  Update available 7.8.0 -> 7.9.0                        │
-│  Run the following to update                            │
-│    npm i --save-dev prisma@latest                       │
-│    npm i @prisma/client@latest                          │
-└─────────────────────────────────────────────────────────┘
-

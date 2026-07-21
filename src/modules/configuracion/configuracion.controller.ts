@@ -22,4 +22,13 @@ export class ConfiguracionController {
       next(error);
     }
   };
+
+  publica = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const config = await this.service.obtenerPublica();
+      sendSuccess(res, 'Configuración pública recuperada con éxito.', config);
+    } catch (error) {
+      next(error);
+    }
+  };
 }

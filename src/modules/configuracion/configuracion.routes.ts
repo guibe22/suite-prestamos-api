@@ -8,8 +8,21 @@ import { actualizarConfiguracionSchema } from './configuracion.schema.js';
 const router = Router();
 const controller = new ConfiguracionController();
 
+/**
+ * @swagger
+ * /configuracion/publica:
+ *   get:
+ *     summary: Subconjunto público (sin auth) — hoy solo minVersionApp, para el chequeo de versión antes de iniciar sesión
+ *     tags: [Configuracion]
+ *     responses:
+ *       200:
+ *         description: Configuración pública
+ */
+router.get('/publica', controller.publica);
+
 // Ajustes globales de PLATAFORMA (ej. enforcement de suscripciones): solo
-// SUPER_ADMIN, igual que /admin/planes.
+// SUPER_ADMIN, igual que /admin/planes. Va DESPUÉS de /publica a propósito —
+// esta guarda solo aplica a las rutas registradas después de ella.
 router.use(authMiddleware, checkRole(['SUPER_ADMIN']));
 
 /**

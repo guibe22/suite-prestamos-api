@@ -12,7 +12,7 @@ export class ConfiguracionService {
     });
   }
 
-  async actualizar(data: { suscripcionesEnforcementEnabled: boolean }) {
+  async actualizar(data: { suscripcionesEnforcementEnabled?: boolean; minVersionApp?: string | null }) {
     return prisma.configuracionSistema.upsert({
       where: { id: ID_SINGLETON },
       update: data,
@@ -28,5 +28,15 @@ export class ConfiguracionService {
   async suscripcionesEnforcementEnabled(): Promise<boolean> {
     const config = await this.obtener();
     return config.suscripcionesEnforcementEnabled;
+  }
+
+  /**
+   * Subconjunto público (sin auth) para que la app pueda comprobar la
+   * versión mínima incluso antes de iniciar sesión — el resto de esta
+   * configuración (enforcement de suscripciones) no se expone aquí.
+   */
+  async obtenerPublica(): Promise<{ minVersionApp: string | null }> {
+    const config = await this.obtener();
+    return { minVersionApp: config.minVersionApp };
   }
 }
