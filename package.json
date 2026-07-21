@@ -20,7 +20,8 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "create-superadmin": "tsx src/scripts/create-superadmin.ts",
-    "migrar-proveedor-pago": "tsx src/scripts/migrar-proveedor-pago.ts"
+    "migrar-proveedor-pago": "tsx src/scripts/migrar-proveedor-pago.ts",
+    "limpiar-datos": "tsx src/scripts/limpiar-datos.ts"
   },
   "keywords": [
     "suite",
