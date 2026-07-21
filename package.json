@@ -16,6 +16,7 @@
     "test": "vitest run",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "create-superadmin": "tsx src/scripts/create-superadmin.ts",
     "migrar-proveedor-pago": "tsx src/scripts/migrar-proveedor-pago.ts"

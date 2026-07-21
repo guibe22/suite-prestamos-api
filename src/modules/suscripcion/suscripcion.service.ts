@@ -2,7 +2,7 @@ import { prisma } from '../../config/database.js';
 import { env } from '../../config/env.js';
 import { ForbiddenError, NotFoundError } from '../../shared/errors/custom.error.js';
 import type { EventoRevenueCat } from './revenuecat.client.js';
-import type { ProveedorPago } from '@prisma/client';
+import type { Prisma, ProveedorPago } from '@prisma/client';
 
 export type RecursoLimitado = 'usuarios' | 'clientes' | 'rutas' | 'prestamosActivos';
 
@@ -153,7 +153,7 @@ export class SuscripcionService {
       tipo: evento.type,
       payload: evento,
       suscripcionId: suscripcion?.id,
-      aplicar: async () => {
+      aplicar: async (tx) => {
         // Organización que no reconocemos (id mal configurado en el cliente,
         // o el evento llegó de un ambiente de pruebas) — se registra para
         // auditoría pero no hay nada que actualizar.
@@ -161,7 +161,7 @@ export class SuscripcionService {
 
         const entitlementId = evento.entitlement_ids?.[0];
         const plan = entitlementId
-          ? await prisma.plan.findFirst({ where: { revenueCatEntitlementId: entitlementId } })
+          ? await tx.plan.findFirst({ where: { revenueCatEntitlementId: entitlementId } })
           : null;
 
         const periodoFinEn = fechaDesdeMs(evento.expiration_at_ms);
@@ -169,7 +169,7 @@ export class SuscripcionService {
 
         switch (evento.type) {
           case 'INITIAL_PURCHASE':
-            await prisma.suscripcion.update({
+            await tx.suscripcion.update({
               where: { id: suscripcion.id },
               data: {
                 ...base,
@@ -183,7 +183,7 @@ export class SuscripcionService {
           case 'RENEWAL':
           case 'NON_RENEWING_PURCHASE':
           case 'PRODUCT_CHANGE':
-            await prisma.suscripcion.update({
+            await tx.suscripcion.update({
               where: { id: suscripcion.id },
               data: { ...base, estado: 'ACTIVA', periodoFinEn, ultimoPagoEn: new Date() },
             });
@@ -191,7 +191,7 @@ export class SuscripcionService {
           case 'UNCANCELLATION':
             // El usuario reactivó el auto-renovado antes de que expirara: no
             // hubo cobro nuevo, solo se limpia la marca de cancelación.
-            await prisma.suscripcion.update({
+            await tx.suscripcion.update({
               where: { id: suscripcion.id },
               data: { ...base, estado: 'ACTIVA', periodoFinEn, canceladaEn: null },
             });
@@ -199,20 +199,20 @@ export class SuscripcionService {
           case 'CANCELLATION':
             // El usuario apagó el auto-renovado: el acceso sigue vivo hasta
             // `periodoFinEn` — el estado solo cambia cuando llegue EXPIRATION.
-            await prisma.suscripcion.update({
+            await tx.suscripcion.update({
               where: { id: suscripcion.id },
               data: { canceladaEn: new Date() },
             });
             break;
           case 'EXPIRATION':
-            await prisma.suscripcion.update({
+            await tx.suscripcion.update({
               where: { id: suscripcion.id },
               data: { estado: 'EXPIRADA', periodoFinEn: periodoFinEn ?? new Date() },
             });
             break;
           case 'BILLING_ISSUE':
           case 'SUBSCRIPTION_PAUSED':
-            await prisma.suscripcion.update({
+            await tx.suscripcion.update({
               where: { id: suscripcion.id },
               data: { estado: 'SUSPENDIDA' },
             });
@@ -230,6 +230,11 @@ export class SuscripcionService {
    * Registra un evento externo de forma idempotente antes de aplicarlo: si
    * `externalEventId` ya fue procesado (RevenueCat reintenta webhooks que no
    * respondieron 2xx), `aplicar` no se vuelve a ejecutar.
+   *
+   * El registro del evento y `aplicar()` corren dentro de la MISMA transacción
+   * — si `aplicar()` falla, la marca de "evento procesado" también se revierte,
+   * así el próximo reintento del webhook vuelve a intentar aplicar el cambio en
+   * vez de saltárselo en silencio por el `externalEventId` ya registrado.
    */
   async registrarEventoIdempotente(params: {
     proveedor: ProveedorPago;
@@ -237,26 +242,28 @@ export class SuscripcionService {
     tipo: string;
     payload: unknown;
     suscripcionId?: string;
-    aplicar: () => Promise<void>;
+    aplicar: (tx: Prisma.TransactionClient) => Promise<void>;
   }): Promise<void> {
-    try {
-      await prisma.suscripcionEvento.create({
-        data: {
-          proveedor: params.proveedor,
-          externalEventId: params.externalEventId,
-          tipo: params.tipo,
-          payload: params.payload as any,
-          suscripcionId: params.suscripcionId,
-        },
-      });
-    } catch (error: any) {
-      if (error?.code === 'P2002') {
-        // Evento ya procesado (reintento del proveedor) — no reaplicar.
-        return;
+    await prisma.$transaction(async (tx) => {
+      try {
+        await tx.suscripcionEvento.create({
+          data: {
+            proveedor: params.proveedor,
+            externalEventId: params.externalEventId,
+            tipo: params.tipo,
+            payload: params.payload as any,
+            suscripcionId: params.suscripcionId,
+          },
+        });
+      } catch (error: any) {
+        if (error?.code === 'P2002') {
+          // Evento ya procesado (reintento del proveedor) — no reaplicar.
+          return;
+        }
+        throw error;
       }
-      throw error;
-    }
 
-    await params.aplicar();
+      await params.aplicar(tx);
+    });
   }
 }
