@@ -449,6 +449,10 @@ model Prestamo {
   estado           String // ACTIVO, LIQUIDADO
   fechaInicio      DateTime
   fechaVencimiento DateTime
+  // Préstamo "viejo" (deuda preexistente cargada al sistema, no originada
+  // ahora): si es false, no debe aparecer en la jornada de cobro activa.
+  // NULL = préstamos creados antes de este campo, tratarlos como true.
+  incluirEnJornada Boolean?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
   deletedAt        DateTime?

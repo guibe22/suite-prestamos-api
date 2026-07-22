@@ -847,6 +847,25 @@ export class SincronizacionService {
               continue;
             }
 
+            // Cliente duplicado por identificación (cédula) dentro de la misma
+            // organización: puede pasar si dos dispositivos crean "al mismo
+            // cliente" antes de sincronizar, o si un reintento tras un error
+            // local (ver bug de asociación Cuota-Cliente) deja varias filas
+            // locales para el mismo cliente. Se omite la fila nueva en vez de
+            // crear un duplicado; la fila ya existente sigue siendo la válida.
+            if (table.name === 'clientes' && mappedData.identificacion) {
+              const duplicado = await modelTx.findFirst({
+                where: { organizacionId, identificacion: mappedData.identificacion, id: { not: id } },
+                select: { id: true },
+              });
+              if (duplicado) {
+                logger.warn(
+                  `⚠️  [SYNC PUSH] Se omitió el cliente ${id}: ya existe un cliente con la identificación '${mappedData.identificacion}' en la organización (id ${duplicado.id}).`
+                );
+                continue;
+              }
+            }
+
             // Colisión de `codigo` entre dispositivos (conteo local, único por
             // organización en el servidor): antes se omitía el registro para
             // no dejar que Prisma abortara todo el lote con P2002, pero eso
