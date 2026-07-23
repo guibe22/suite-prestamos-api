@@ -39,7 +39,10 @@ export class PagoService {
     const pagosVigentes = await tx.pago.findMany({
       where: { jornadaId, deletedAt: null },
     });
-    const efectivoCobrado = pagosVigentes.reduce((sum: number, p: any) => sum + Number(p.monto), 0);
+    const efectivoCobrado = pagosVigentes.reduce(
+      (sum: number, p: any) => sum + Number(p.monto) + Number(p.moraCobrada ?? 0),
+      0
+    );
     await tx.jornadaCobranza.update({
       where: { id: jornadaId },
       data: { efectivoCobrado },

@@ -453,6 +453,14 @@ model Prestamo {
   // ahora): si es false, no debe aparecer en la jornada de cobro activa.
   // NULL = préstamos creados antes de este campo, tratarlos como true.
   incluirEnJornada Boolean?
+  // Código legible (P-000001) persistido en vez de recalculado en memoria
+  // contando filas — ese cálculo era frágil entre dispositivos offline-first.
+  codigo           String?
+  // Si este préstamo nació de saldar uno anterior con saldo pendiente
+  // (ver Fase 6 del feedback de testers), aquí queda el id del que reemplazó.
+  renovadoDePrestamoId String?
+  // Firma del cliente (PNG en base64) capturada antes de guardar el préstamo.
+  firmaBase64          String? @db.Text
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
   deletedAt        DateTime?
@@ -497,6 +505,14 @@ model Pago {
   jornada    JornadaCobranza? @relation(fields: [jornadaId], references: [id], onDelete: SetNull)
   metodoPago String // EFECTIVO, TRANSFERENCIA, etc.
   referencia String?
+  // Split de mora dentro del mismo pago: el cliente entrega `monto` (ya
+  // incluye `moraCobrada`) y el sistema separa cuánto fue a cuota/capital
+  // vs. mora, en vez de un MovimientoCaja de mora sin relación al pago.
+  moraCobrada            Decimal  @default(0) @db.Decimal(12, 2)
+  porcentajeMoraAplicado Decimal? @db.Decimal(5, 2)
+  moraAcumuladaAlMomento Decimal? @db.Decimal(12, 2)
+  cuotaNumero            Int?
+  esParcial              Boolean  @default(false)
   createdAt  DateTime         @default(now())
   updatedAt  DateTime         @updatedAt
   deletedAt  DateTime?

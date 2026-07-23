@@ -128,6 +128,13 @@ export class SincronizacionService {
       data.clientesVisitados = data.clientesVisitados ?? 0;
       data.clientesPendientes = data.clientesPendientes ?? 0;
     }
+    if (tableName === 'pagos') {
+      // moraCobrada/esParcial son NOT NULL con default en Prisma pero
+      // opcionales en WatermelonDB (addColumns no backfillea filas viejas)
+      // — mismo caso que jornadas_cobranza arriba.
+      data.moraCobrada = data.moraCobrada ?? 0;
+      data.esParcial = data.esParcial ?? false;
+    }
     return data;
   }
 
