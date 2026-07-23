@@ -666,7 +666,7 @@ export class SincronizacionService {
         if (table.name === 'organizaciones' || table.name === 'usuarios') continue;
         // Quitar un colaborador de una ruta es una decisión administrativa,
         // igual que reasignar el responsable (ver stripProtectedFields).
-        if (table.name === 'ruta_colaboradores' && userRol !== 'ADMIN' && userRol !== 'SUPER_ADMIN') {
+        if (table.name === 'ruta_colaboradores' && userRol !== 'ADMIN' && userRol !== 'SUPER_ADMIN' && userRol !== 'GERENTE') {
           const tc = changes[table.name];
           if (tc && tc.deleted.length > 0) {
             logger.warn(
@@ -721,7 +721,7 @@ export class SincronizacionService {
 
         // Agregar/reemplazar un colaborador de ruta es una decisión
         // administrativa (ver bloqueo simétrico arriba en eliminaciones).
-        if (table.name === 'ruta_colaboradores' && userRol !== 'ADMIN' && userRol !== 'SUPER_ADMIN') {
+        if (table.name === 'ruta_colaboradores' && userRol !== 'ADMIN' && userRol !== 'SUPER_ADMIN' && userRol !== 'GERENTE') {
           if (tableChanges.created.length || tableChanges.updated.length) {
             logger.warn(
               `⚠️  [SYNC PUSH] Se ignoraron ${tableChanges.created.length + tableChanges.updated.length} cambios en 'ruta_colaboradores' (solo ADMIN puede gestionar colaboradores).`

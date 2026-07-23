@@ -6,7 +6,7 @@ import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '.
 import { SuscripcionService } from '../suscripcion/suscripcion.service.js';
 import type { ActualizarUsuarioInput, CrearUsuarioInput, MiembroEquipoResponse } from './usuario.types.js';
 
-const ROLES_ADMINISTRABLES = ['COBRADOR', 'CAJERO'];
+const ROLES_ADMINISTRABLES = ['COBRADOR', 'CAJERO', 'GERENTE'];
 const INVITACION_VIGENCIA_MS = 7 * 24 * 60 * 60 * 1000;
 
 export class UsuarioService {

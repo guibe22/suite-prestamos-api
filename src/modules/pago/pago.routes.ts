@@ -29,7 +29,7 @@ const controller = new PagoController();
 router.delete(
   '/:id',
   authMiddleware,
-  checkRole(['ADMIN', 'SUPER_ADMIN']),
+  checkRole(['ADMIN', 'SUPER_ADMIN', 'GERENTE']),
   validate({ params: idParamSchema }),
   controller.eliminar
 );

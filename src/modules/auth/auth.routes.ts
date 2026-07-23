@@ -127,7 +127,7 @@ router.get('/profile', authMiddleware, controller.profile);
 router.post(
   '/configure-organization',
   authMiddleware,
-  checkRole(['ADMIN', 'SUPER_ADMIN']),
+  checkRole(['ADMIN', 'SUPER_ADMIN', 'GERENTE']),
   validate({ body: configureOrganizationSchema }),
   controller.configureOrganization
 );

@@ -34,7 +34,7 @@ export const configureOrganizationSchema = z.object({
       z.object({
         nombre: z.string().min(2, 'El nombre del miembro es requerido.'),
         email: z.string().email('El correo del miembro no es válido.'),
-        rol: z.enum(['COBRADOR', 'CAJERO', 'ADMIN']).optional(),
+        rol: z.enum(['COBRADOR', 'CAJERO', 'GERENTE', 'ADMIN']).optional(),
         password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres.').optional(),
       })
     )
