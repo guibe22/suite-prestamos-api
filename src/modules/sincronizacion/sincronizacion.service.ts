@@ -899,6 +899,36 @@ export class SincronizacionService {
               }
             }
 
+            // Mismo problema que arriba pero para préstamos: el código
+            // (P-000001) se genera contando filas localmente en el dispositivo
+            // (ver clientes/prestamos.tsx), así que dos dispositivos offline
+            // pueden generar el mismo código para préstamos distintos.
+            // Prestamo no tiene columna organizacionId propia (hasOrgId:
+            // false), así que el scope "misma organización" se resuelve vía
+            // el cliente dueño del préstamo en vez de un @@unique directo.
+            if (table.name === 'prestamos' && mappedData.codigo && mappedData.clienteId) {
+              const codigoOriginal = mappedData.codigo;
+              let intento = 1;
+              while (
+                await modelTx.findFirst({
+                  where: {
+                    codigo: mappedData.codigo,
+                    id: { not: id },
+                    cliente: { organizacionId },
+                  },
+                  select: { id: true },
+                })
+              ) {
+                intento += 1;
+                mappedData.codigo = `${codigoOriginal}-${intento}`;
+              }
+              if (mappedData.codigo !== codigoOriginal) {
+                logger.warn(
+                  `⚠️  [SYNC PUSH] El código '${codigoOriginal}' del préstamo ${id} ya estaba en uso; se le asignó '${mappedData.codigo}' para no perder el registro.`
+                );
+              }
+            }
+
             // Registro nuevo: validar que el padre (cliente/prestamo/caja) sea de la org
             // y, si es COBRADOR, que además sea de su ruta asignada.
             const padreValido = await this.validateParentInOrg(tx, table.name, mappedData, organizacionId, userId, userRol);

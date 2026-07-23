@@ -513,6 +513,11 @@ model Pago {
   moraAcumuladaAlMomento Decimal? @db.Decimal(12, 2)
   cuotaNumero            Int?
   esParcial              Boolean  @default(false)
+  // Saldo pendiente del préstamo justo después de aplicar este pago (snapshot
+  // histórico). NULL = pagos previos a este campo, que no lo tienen; el
+  // recibo reimpreso aproxima con el saldo actual en ese caso (ver
+  // historial.tsx en la app móvil).
+  saldoRestanteAlMomento Decimal? @db.Decimal(12, 2)
   createdAt  DateTime         @default(now())
   updatedAt  DateTime         @updatedAt
   deletedAt  DateTime?
