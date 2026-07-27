@@ -83,4 +83,24 @@ export class AdminOrganizacionService {
       include: { plan: true },
     });
   }
+
+  /**
+   * Bitácora de auditoría de una organización — hoy solo se registran
+   * eliminaciones de pagos (ver sincronizacion.service.ts, la única acción de
+   * borrado gateada explícitamente por un permiso en el app). El modelo
+   * Auditoria existe desde antes; este es el primer código que lo lee.
+   */
+  async listarAuditoria(organizacionId: string) {
+    const organizacion = await prisma.organizacion.findUnique({ where: { id: organizacionId } });
+    if (!organizacion) {
+      throw new NotFoundError('La organización no existe.');
+    }
+
+    return prisma.auditoria.findMany({
+      where: { usuario: { organizacionId } },
+      include: { usuario: { select: { nombre: true, email: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+  }
 }

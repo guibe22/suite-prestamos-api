@@ -22,4 +22,13 @@ export class AdminOrganizacionController {
       next(error);
     }
   };
+
+  listarAuditoria = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const registros = await this.service.listarAuditoria(req.params.id);
+      sendSuccess(res, 'Bitácora de auditoría recuperada con éxito.', registros);
+    } catch (error) {
+      next(error);
+    }
+  };
 }

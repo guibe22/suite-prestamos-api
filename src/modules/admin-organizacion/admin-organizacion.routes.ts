@@ -49,4 +49,24 @@ router.patch(
   controller.actualizarSuscripcion
 );
 
+/**
+ * @swagger
+ * /admin/organizaciones/{id}/auditoria:
+ *   get:
+ *     summary: Bitácora de auditoría de una organización — solo SUPER_ADMIN
+ *     tags: [AdminOrganizacion]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Últimos 100 registros de auditoría
+ */
+router.get('/:id/auditoria', validate({ params: idParamSchema }), controller.listarAuditoria);
+
 export default router;

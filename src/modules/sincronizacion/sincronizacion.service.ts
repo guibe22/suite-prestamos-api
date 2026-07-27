@@ -741,6 +741,16 @@ export class SincronizacionService {
               where: { id: { in: idsToDelete }, ...orgScope },
             });
           } else {
+            // Borrar un pago es la única acción de borrado hoy gateada
+            // explícitamente por un permiso en el app (puedeEliminarPagos) —
+            // capturamos su estado previo para la bitácora de auditoría
+            // ANTES de aplicar el soft-delete. El modelo Auditoria
+            // (schema.prisma) existía desde antes; nadie escribía en él.
+            let pagosPrevios: any[] = [];
+            if (table.name === 'pagos') {
+              pagosPrevios = await tx.pago.findMany({ where: { id: { in: idsToDelete }, ...orgScope } });
+            }
+
             await modelTx.updateMany({
               where: { id: { in: idsToDelete }, ...orgScope },
               data: {
@@ -748,6 +758,21 @@ export class SincronizacionService {
                 deletedBy: userId,
               },
             });
+
+            if (pagosPrevios.length > 0) {
+              await tx.auditoria.createMany({
+                data: pagosPrevios.map((p) => ({
+                  usuarioId: userId,
+                  accion: 'DELETE',
+                  tabla: 'pagos',
+                  registroId: p.id,
+                  // JSON.stringify/parse: Prisma.Decimal implementa toJSON()
+                  // (serializa a string) y Date serializa a ISO — resultado
+                  // ya es un valor plano válido para la columna Json.
+                  valoresAnteriores: JSON.parse(JSON.stringify(p)),
+                })),
+              });
+            }
           }
         }
       }
