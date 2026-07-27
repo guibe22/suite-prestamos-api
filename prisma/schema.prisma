@@ -478,6 +478,13 @@ model Prestamo {
 
   cuotas Cuota[]
   pagos  Pago[]
+
+  // Postgres, a diferencia de MySQL, NO indexa automáticamente las FK
+  // escalares — sin esto, tanto el pull incremental de sync (WHERE updatedAt
+  // > lastPulledAt) como cualquier lookup por cliente hacen sequential scan
+  // a medida que crece la tabla, para TODAS las organizaciones del sistema.
+  @@index([clienteId])
+  @@index([updatedAt])
 }
 
 model Cuota {
@@ -499,6 +506,9 @@ model Cuota {
   updatedAt        DateTime  @updatedAt
   deletedAt        DateTime?
   deletedBy        String?
+
+  @@index([prestamoId])
+  @@index([updatedAt])
 }
 
 model Pago {
@@ -536,6 +546,11 @@ model Pago {
   updatedAt  DateTime         @updatedAt
   deletedAt  DateTime?
   deletedBy  String?
+
+  @@index([prestamoId])
+  @@index([cajaId])
+  @@index([jornadaId])
+  @@index([updatedAt])
 }
 
 model Caja {
