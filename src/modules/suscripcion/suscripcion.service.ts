@@ -1,8 +1,49 @@
 import { prisma } from '../../config/database.js';
 import { env } from '../../config/env.js';
+import { ConfiguracionService } from '../configuracion/configuracion.service.js';
 import { ForbiddenError, NotFoundError } from '../../shared/errors/custom.error.js';
 import type { EventoRevenueCat } from './revenuecat.client.js';
-import type { Prisma, ProveedorPago } from '@prisma/client';
+import type { Prisma, ProveedorPago, Suscripcion } from '@prisma/client';
+
+export type NivelAccesoSuscripcion = 'ACTIVO' | 'GRACIA' | 'BLOQUEADO';
+
+export interface EstadoAccesoSuscripcion {
+  nivel: NivelAccesoSuscripcion;
+  /** Solo tiene sentido cuando nivel === 'GRACIA'. */
+  diasRestantesGracia: number | null;
+  soporteTelefono: string | null;
+  soporteEmail: string | null;
+}
+
+/**
+ * Fecha desde la que la organización dejó de tener acceso ACTIVO, usada para
+ * contar el periodo de gracia. Se reutiliza el campo más relevante para cada
+ * estado en vez de agregar una columna nueva que hubiera que setear a mano en
+ * cada uno de los lugares que cambian `estado` (panel admin, webhook de
+ * RevenueCat): el trial vencido ya tiene `trialTerminaEn`, una cancelación ya
+ * tiene `canceladaEn`, una expiración ya tiene `periodoFinEn`. Para SUSPENDIDA
+ * / PENDIENTE_PAGO (sin campo dedicado) se usa `updatedAt` como aproximación
+ * razonable, ya que esas transiciones no tocan otros campos a la vez.
+ */
+function fechaInicioBloqueo(s: Suscripcion): Date {
+  switch (s.estado) {
+    case 'TRIAL':
+      return s.trialTerminaEn ?? s.updatedAt;
+    case 'CANCELADA':
+      return s.canceladaEn ?? s.updatedAt;
+    case 'EXPIRADA':
+      return s.periodoFinEn ?? s.updatedAt;
+    default:
+      return s.updatedAt;
+  }
+}
+
+export function formatearContacto(soporteTelefono: string | null, soporteEmail: string | null): string {
+  const partes: string[] = [];
+  if (soporteTelefono) partes.push(`tel. ${soporteTelefono}`);
+  if (soporteEmail) partes.push(`correo ${soporteEmail}`);
+  return partes.length > 0 ? `Contáctanos: ${partes.join(' o ')}.` : '';
+}
 
 export type RecursoLimitado = 'usuarios' | 'clientes' | 'rutas' | 'prestamosActivos';
 
@@ -25,6 +66,8 @@ function fechaDesdeMs(ms: number | null | undefined): Date | undefined {
 }
 
 export class SuscripcionService {
+  private configuracionService = new ConfiguracionService();
+
   /**
    * Config pública que el cliente necesita para inicializar el SDK de
    * RevenueCat. La key vive del lado servidor (no EXPO_PUBLIC_*) para que
@@ -44,7 +87,10 @@ export class SuscripcionService {
       throw new NotFoundError('Esta organización no tiene una suscripción registrada.');
     }
 
-    const uso = await this.obtenerUsoActual(organizacionId);
+    const [uso, acceso] = await Promise.all([
+      this.obtenerUsoActual(organizacionId),
+      this.obtenerNivelAcceso(organizacionId),
+    ]);
 
     return {
       id: suscripcion.id,
@@ -62,6 +108,7 @@ export class SuscripcionService {
         limites: suscripcion.plan.limites,
       },
       uso,
+      acceso,
     };
   }
 
@@ -143,6 +190,43 @@ export class SuscripcionService {
       return !suscripcion.trialTerminaEn || suscripcion.trialTerminaEn.getTime() > Date.now();
     }
     return false;
+  }
+
+  /**
+   * Nivel de acceso de 3 escalones para requireActiveSubscriptionForSync():
+   * ACTIVO (TRIAL vigente o ACTIVA) → sin restricciones.
+   * GRACIA (recién dejó de estar activa, dentro de `suscripcionGraciaDias`) →
+   * puede seguir cobrando préstamos existentes, pero no agregar clientes,
+   * préstamos ni rutas nuevas.
+   * BLOQUEADO (gracia agotada, o sin fila de suscripción) → nada de escritura.
+   */
+  async obtenerNivelAcceso(organizacionId: string): Promise<EstadoAccesoSuscripcion> {
+    const config = await this.configuracionService.obtener();
+    const contacto = { soporteTelefono: config.soporteTelefono, soporteEmail: config.soporteEmail };
+
+    const suscripcion = await prisma.suscripcion.findUnique({ where: { organizacionId } });
+    if (!suscripcion) {
+      return { nivel: 'BLOQUEADO', diasRestantesGracia: null, ...contacto };
+    }
+
+    const activa =
+      suscripcion.estado === 'ACTIVA' ||
+      (suscripcion.estado === 'TRIAL' &&
+        (!suscripcion.trialTerminaEn || suscripcion.trialTerminaEn.getTime() > Date.now()));
+    if (activa) {
+      return { nivel: 'ACTIVO', diasRestantesGracia: null, ...contacto };
+    }
+
+    const graciaDias = config.suscripcionGraciaDias;
+    const desde = fechaInicioBloqueo(suscripcion);
+    const diasTranscurridos = (Date.now() - desde.getTime()) / (24 * 60 * 60 * 1000);
+
+    if (graciaDias > 0 && diasTranscurridos < graciaDias) {
+      const diasRestantesGracia = Math.max(0, Math.ceil(graciaDias - diasTranscurridos));
+      return { nivel: 'GRACIA', diasRestantesGracia, ...contacto };
+    }
+
+    return { nivel: 'BLOQUEADO', diasRestantesGracia: 0, ...contacto };
   }
 
   /**

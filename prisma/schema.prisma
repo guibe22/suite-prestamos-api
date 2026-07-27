@@ -108,6 +108,16 @@ model ConfiguracionSistema {
   /// debe correr incluso antes de que el usuario inicie sesión.
   minVersionApp String?
 
+  /// Días de gracia tras dejar de estar ACTIVA/TRIAL vigente antes de cortar
+  /// también los cobros. Durante la gracia solo se bloquea agregar clientes,
+  /// préstamos o rutas nuevas — ver requireActiveSubscriptionForSync().
+  suscripcionGraciaDias Int @default(7)
+
+  /// Contacto que se muestra en los avisos de suspensión/gracia para que el
+  /// cliente sepa a quién escribir. Null = no se muestra esa línea.
+  soporteTelefono String?
+  soporteEmail    String?
+
   updatedAt DateTime @updatedAt
 }
 

@@ -1,6 +1,10 @@
 import { prisma } from '../../config/database.js';
+import type { actualizarConfiguracionSchema } from './configuracion.schema.js';
+import type { z } from 'zod';
 
 const ID_SINGLETON = 'default';
+
+type ActualizarConfiguracionInput = z.infer<typeof actualizarConfiguracionSchema>;
 
 export class ConfiguracionService {
   /** Crea la fila singleton con los defaults si todavía no existe (primer arranque). */
@@ -12,7 +16,7 @@ export class ConfiguracionService {
     });
   }
 
-  async actualizar(data: { suscripcionesEnforcementEnabled?: boolean; minVersionApp?: string | null }) {
+  async actualizar(data: ActualizarConfiguracionInput) {
     return prisma.configuracionSistema.upsert({
       where: { id: ID_SINGLETON },
       update: data,
