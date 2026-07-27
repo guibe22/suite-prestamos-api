@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { AppError } from '../shared/errors/custom.error.js';
 import { sendError } from '../shared/responses/api.response.js';
 import { logger } from '../config/logger.js';
+import { Sentry } from '../config/sentry.js';
 import { z } from 'zod';
 
 export const errorMiddleware = (
@@ -10,6 +11,7 @@ export const errorMiddleware = (
   res: Response,
   _next: NextFunction,
 ): void => {
+  Sentry.captureException(err);
   logger.error(
     {
       err: {

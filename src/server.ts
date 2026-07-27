@@ -3,6 +3,7 @@ import app from './app.js';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { prisma } from './config/database.js';
+import { Sentry } from './config/sentry.js';
 
 /** Devuelve las IPv4 de red (LAN) de esta PC, las que debe usar el dispositivo/emulador. */
 const getLanAddresses = (): string[] => {
@@ -50,6 +51,7 @@ const startServer = async () => {
     process.on('SIGTERM', shutdown);
     process.on('SIGINT', shutdown);
   } catch (error) {
+    Sentry.captureException(error);
     logger.fatal(error, '💥 Falló la inicialización del servidor');
     process.exit(1);
   }

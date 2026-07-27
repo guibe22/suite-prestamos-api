@@ -39,6 +39,26 @@ describe('SincronizacionService — scoping multi-tenant (scopeWhere)', () => {
       expect(where.organizacionId).toBe('org-1');
     }
   });
+
+  it.each(['referencias_cliente', 'avales', 'documentos_cliente'])(
+    'COBRADOR: %s queda restringido a clientes de rutas donde es responsable o colaborador',
+    (tabla) => {
+      const where = service.scopeWhere(tabla, 'org-1', 'user-1', 'COBRADOR');
+      expect(where.cliente.organizacionId).toBe('org-1');
+      expect(where.cliente.ruta.OR).toEqual([
+        { responsableId: 'user-1' },
+        { colaboradores: { some: { usuarioId: 'user-1', deletedAt: null } } },
+      ]);
+    }
+  );
+
+  it.each(['referencias_cliente', 'avales', 'documentos_cliente'])(
+    'ADMIN: %s solo exige que el cliente sea de la organización, sin restricción de ruta',
+    (tabla) => {
+      const where = service.scopeWhere(tabla, 'org-1', 'user-1', 'ADMIN');
+      expect(where).toEqual({ cliente: { organizacionId: 'org-1' } });
+    }
+  );
 });
 
 describe('SincronizacionService — scoping multi-tenant (validateParentInOrg)', () => {
@@ -84,4 +104,39 @@ describe('SincronizacionService — scoping multi-tenant (validateParentInOrg)',
     expect(valido).toBe(false);
     expect(tx.ruta.findFirst).not.toHaveBeenCalled();
   });
+
+  it.each(['referencias_cliente', 'avales', 'documentos_cliente'])(
+    'rechaza un %s cuyo clienteId no pertenece a la organización del actor',
+    async (tabla) => {
+      const tx = { cliente: { findFirst: vi.fn().mockResolvedValue(null) } };
+      const valido = await service.validateParentInOrg(
+        tx,
+        tabla,
+        { clienteId: 'cliente-de-otra-org' },
+        'org-1',
+        'user-1',
+        'ADMIN'
+      );
+      expect(valido).toBe(false);
+    }
+  );
+
+  it.each(['referencias_cliente', 'avales', 'documentos_cliente'])(
+    'sin clienteId, rechaza un %s sin siquiera consultar nada',
+    async (tabla) => {
+      const tx = { cliente: { findFirst: vi.fn() } };
+      const valido = await service.validateParentInOrg(tx, tabla, {}, 'org-1', 'user-1', 'ADMIN');
+      expect(valido).toBe(false);
+      expect(tx.cliente.findFirst).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['referencias_cliente', 'avales', 'documentos_cliente'])(
+    'acepta un %s cuyo cliente sí pertenece a la organización',
+    async (tabla) => {
+      const tx = { cliente: { findFirst: vi.fn().mockResolvedValue({ id: 'cliente-1' }) } };
+      const valido = await service.validateParentInOrg(tx, tabla, { clienteId: 'cliente-1' }, 'org-1', 'user-1', 'ADMIN');
+      expect(valido).toBe(true);
+    }
+  );
 });

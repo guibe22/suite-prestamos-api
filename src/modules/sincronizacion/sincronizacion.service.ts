@@ -158,6 +158,9 @@ export class SincronizacionService {
       case 'movimientos_cajas': return 'movimientoCaja';
       case 'jornadas_cobranza': return 'jornadaCobranza';
       case 'ruta_colaboradores': return 'rutaColaborador';
+      case 'referencias_cliente': return 'referenciaCliente';
+      case 'avales': return 'aval';
+      case 'documentos_cliente': return 'documentoCliente';
       default: return tableName.replace(/s$/, '');
     }
   }
@@ -205,6 +208,10 @@ export class SincronizacionService {
         return { caja: { organizacionId } };
       case 'ruta_colaboradores':
         return { ruta: { organizacionId } };
+      case 'referencias_cliente':
+      case 'avales':
+      case 'documentos_cliente':
+        return { cliente: { organizacionId } };
       default:
         return {};
     }
@@ -244,6 +251,10 @@ export class SincronizacionService {
         // más arriba (push()) para no-ADMIN; este where nunca debe matchear
         // un COBRADOR aunque ese gate cambie en el futuro.
         return { id: '' };
+      case 'referencias_cliente':
+      case 'avales':
+      case 'documentos_cliente':
+        return { cliente: { organizacionId, ruta: this.rutaAccessFilter(actorId) } };
       default:
         return this.orgScopeWhere(tableName, organizacionId);
     }
@@ -275,7 +286,10 @@ export class SincronizacionService {
         });
         return !!ruta;
       }
-      case 'prestamos': {
+      case 'prestamos':
+      case 'referencias_cliente':
+      case 'avales':
+      case 'documentos_cliente': {
         if (!data.clienteId) return false;
         const c = await tx.cliente.findFirst({
           where: { id: data.clienteId, organizacionId, ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
@@ -417,6 +431,30 @@ export class SincronizacionService {
           organizacionId,
           ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}),
           ...(date ? { updatedAt: { gt: date } } : {}),
+        }),
+      },
+      {
+        name: 'referencias_cliente',
+        model: prisma.referenciaCliente,
+        whereClause: (date: Date | null) => ({
+          cliente: { organizacionId, ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
+          ...(date ? { createdAt: { gt: date } } : {}),
+        }),
+      },
+      {
+        name: 'avales',
+        model: prisma.aval,
+        whereClause: (date: Date | null) => ({
+          cliente: { organizacionId, ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
+          ...(date ? { createdAt: { gt: date } } : {}),
+        }),
+      },
+      {
+        name: 'documentos_cliente',
+        model: prisma.documentoCliente,
+        whereClause: (date: Date | null) => ({
+          cliente: { organizacionId, ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
+          ...(date ? { createdAt: { gt: date } } : {}),
         }),
       },
       {
@@ -607,6 +645,9 @@ export class SincronizacionService {
       { name: 'ruta_colaboradores', model: prisma.rutaColaborador, hasOrgId: false },
       { name: 'jornadas_cobranza', model: prisma.jornadaCobranza, hasOrgId: true },
       { name: 'clientes', model: prisma.cliente, hasOrgId: true },
+      { name: 'referencias_cliente', model: prisma.referenciaCliente, hasOrgId: false },
+      { name: 'avales', model: prisma.aval, hasOrgId: false },
+      { name: 'documentos_cliente', model: prisma.documentoCliente, hasOrgId: false },
       { name: 'cajas', model: prisma.caja, hasOrgId: true },
       { name: 'prestamos', model: prisma.prestamo, hasOrgId: false },
       { name: 'cuotas', model: prisma.cuota, hasOrgId: false },
@@ -685,8 +726,17 @@ export class SincronizacionService {
           // cross-ruta.
           const orgScope = this.scopeWhere(table.name, organizacionId, userId, userRol);
 
-          // Borrado lógico actualizando el campo deletedAt (excepto movimientoCaja que no tiene)
-          if (table.name === 'movimientos_cajas') {
+          // Borrado lógico actualizando el campo deletedAt, salvo en las tablas
+          // que no tienen esa columna (movimientoCaja, y referencias/aval/
+          // documentos del cliente: datos de bajo volumen sin edición
+          // posterior, mismo trade-off ya aceptado para movimientoCaja) —
+          // ahí se hace un borrado físico real.
+          if (
+            table.name === 'movimientos_cajas' ||
+            table.name === 'referencias_cliente' ||
+            table.name === 'avales' ||
+            table.name === 'documentos_cliente'
+          ) {
             await modelTx.deleteMany({
               where: { id: { in: idsToDelete }, ...orgScope },
             });

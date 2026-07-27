@@ -31,6 +31,10 @@ const envSchema = z.object({
   // EXPO_PUBLIC_*) para que rotarla no requiera un build nuevo de la app: el
   // cliente la pide en caliente vía GET /suscripcion/config.
   REVENUECAT_ANDROID_API_KEY: z.string().optional(),
+
+  // Monitoreo de errores (Sentry). Opcional: sin DSN, el SDK queda
+  // deshabilitado (ver config/sentry.ts) y no cambia ningún comportamiento.
+  SENTRY_DSN: z.string().optional(),
 })
   .refine((e) => e.NODE_ENV !== 'production' || !/change-me/i.test(e.JWT_SECRET), {
     message: 'JWT_SECRET no puede ser el valor placeholder en producción.',
