@@ -10,7 +10,7 @@ export async function sendEmail(params: { to: string; subject: string; html: str
   const apiKey = env.RESEND_API_KEY;
   if (!apiKey) {
     if (env.NODE_ENV !== 'production') {
-      logger.warn(`⚠️  RESEND_API_KEY no configurada.`);
+      logger.warn('⚠️  RESEND_API_KEY no configurada.');
       logger.warn(`🔑 [SOLO DESARROLLO] ${params.devLogFallback}`);
       return;
     }

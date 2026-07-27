@@ -18,7 +18,7 @@ export class SincronizacionController {
       const lastPulledAtStr = req.query.last_pulled_at as string;
       const lastPulledAt = lastPulledAtStr ? Number(lastPulledAtStr) : 0;
 
-      if (isNaN(lastPulledAt)) {
+      if (Number.isNaN(lastPulledAt)) {
         throw new BadRequestError('El parámetro last_pulled_at debe ser un número válido.');
       }
 
