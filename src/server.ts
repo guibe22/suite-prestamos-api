@@ -4,6 +4,7 @@ import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { prisma } from './config/database.js';
 import { Sentry } from './config/sentry.js';
+import { startScoreRecalcWorker } from './workers/score-recalc.worker.js';
 
 /** Devuelve las IPv4 de red (LAN) de esta PC, las que debe usar el dispositivo/emulador. */
 const getLanAddresses = (): string[] => {
@@ -24,6 +25,8 @@ const startServer = async () => {
     // Probar conexión a la base de datos antes de levantar el servidor
     await prisma.$connect();
     logger.info('🔌 Conexión exitosa a la base de datos PostgreSQL');
+
+    startScoreRecalcWorker();
 
     const server = app.listen(env.PORT, () => {
       logger.info(`🚀 Servidor ejecutándose en http://localhost:${env.PORT}`);
