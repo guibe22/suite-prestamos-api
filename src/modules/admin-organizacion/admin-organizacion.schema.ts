@@ -7,6 +7,9 @@ export const actualizarSuscripcionOrgSchema = z.object({
   trialTerminaEn: z.string().datetime().nullable().optional(),
   periodoFinEn: z.string().datetime().nullable().optional(),
   canceladaEn: z.string().datetime().nullable().optional(),
+  // Solo relevantes con proveedor MANUAL (pago en efectivo) — ver Suscripcion en schema.prisma.
+  avisoDias: z.number().int().min(0).nullable().optional(),
+  diasGraciaSuspension: z.number().int().min(0).nullable().optional(),
 });
 
 export const idParamSchema = z.object({

@@ -37,6 +37,9 @@ export class AdminOrganizacionService {
             trialTerminaEn: org.suscripcion.trialTerminaEn,
             periodoFinEn: org.suscripcion.periodoFinEn,
             canceladaEn: org.suscripcion.canceladaEn,
+            avisoDias: org.suscripcion.avisoDias,
+            diasGraciaSuspension: org.suscripcion.diasGraciaSuspension,
+            avisoEnviadoEn: org.suscripcion.avisoEnviadoEn,
             plan: {
               id: org.suscripcion.plan.id,
               codigo: org.suscripcion.plan.codigo,
@@ -67,13 +70,23 @@ export class AdminOrganizacionService {
       throw new NotFoundError('El plan indicado no existe.');
     }
 
+    const actual = await prisma.suscripcion.findUnique({ where: { organizacionId } });
+    const periodoFinEn = normalizarFecha(data.periodoFinEn);
+    // Si se registra un `periodoFinEn` nuevo (ej. un pago en efectivo recién
+    // cobrado), se limpia la marca del aviso anterior para que el nuevo
+    // periodo vuelva a avisar cuando corresponda — ver suscripcion-vencimiento.worker.ts.
+    const periodoFinEnCambio = periodoFinEn !== undefined && periodoFinEn?.getTime() !== actual?.periodoFinEn?.getTime();
+
     const campos = {
       planId: data.planId,
       proveedor: data.proveedor,
       estado: data.estado,
       trialTerminaEn: normalizarFecha(data.trialTerminaEn),
-      periodoFinEn: normalizarFecha(data.periodoFinEn),
+      periodoFinEn,
       canceladaEn: normalizarFecha(data.canceladaEn),
+      avisoDias: data.avisoDias,
+      diasGraciaSuspension: data.diasGraciaSuspension,
+      ...(periodoFinEnCambio ? { avisoEnviadoEn: null } : {}),
     };
 
     return prisma.suscripcion.upsert({

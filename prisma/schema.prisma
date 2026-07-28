@@ -139,6 +139,25 @@ model Suscripcion {
   canceladaEn     DateTime?
   ultimoPagoEn    DateTime?
 
+  /// Solo tiene efecto con proveedor MANUAL (pago en efectivo/transferencia
+  /// reconciliado a mano, ej. plan Empresarial): días antes de `periodoFinEn`
+  /// para avisar por correo a los ADMIN de la organización que el pago se
+  /// acerca. Null = no avisar. Ver suscripcion-vencimiento.worker.ts.
+  avisoDias Int?
+
+  /// Marca de cuándo se envió el aviso de vencimiento para el `periodoFinEn`
+  /// vigente, para no reenviarlo cada día. Se limpia (null) cada vez que se
+  /// registra un pago nuevo (periodoFinEn cambia), así el siguiente periodo
+  /// vuelve a avisar.
+  avisoEnviadoEn DateTime?
+
+  /// Solo tiene efecto con proveedor MANUAL: días de gracia después de
+  /// `periodoFinEn` antes de pasar el estado a SUSPENDIDA automáticamente.
+  /// Null/0 = suspender apenas se cumple `periodoFinEn`. Una vez SUSPENDIDA,
+  /// aplica el mismo flujo de gracia global que el resto del sistema
+  /// (ConfiguracionSistema.suscripcionGraciaDias vía obtenerNivelAcceso).
+  diasGraciaSuspension Int?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
