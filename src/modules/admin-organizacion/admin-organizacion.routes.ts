@@ -3,7 +3,11 @@ import { AdminOrganizacionController } from './admin-organizacion.controller.js'
 import { authMiddleware } from '../../middlewares/auth.middleware.js';
 import { checkRole } from '../../middlewares/permissions.middleware.js';
 import { validate } from '../../middlewares/validate.middleware.js';
-import { actualizarSuscripcionOrgSchema, idParamSchema } from './admin-organizacion.schema.js';
+import {
+  actualizarSuscripcionOrgSchema,
+  idParamSchema,
+  listarOrganizacionesQuerySchema,
+} from './admin-organizacion.schema.js';
 
 const router = Router();
 const controller = new AdminOrganizacionController();
@@ -15,15 +19,15 @@ router.use(authMiddleware, checkRole(['SUPER_ADMIN']));
  * @swagger
  * /admin/organizaciones:
  *   get:
- *     summary: Catálogo de organizaciones con su suscripción y uso — solo SUPER_ADMIN
+ *     summary: Catálogo paginado de organizaciones con su suscripción y uso — solo SUPER_ADMIN
  *     tags: [AdminOrganizacion]
  *     security:
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: Lista de organizaciones
+ *         description: Lista paginada de organizaciones
  */
-router.get('/', controller.listar);
+router.get('/', validate({ query: listarOrganizacionesQuerySchema }), controller.listar);
 
 /**
  * @swagger

@@ -1,5 +1,13 @@
 import { z } from 'zod';
 
+export const listarOrganizacionesQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1),
+  limit: z.coerce.number().int().positive().optional().default(10),
+  search: z.string().optional(),
+  estado: z.string().optional(),
+  planId: z.string().optional(),
+});
+
 export const actualizarSuscripcionOrgSchema = z.object({
   planId: z.string().uuid('El id del plan no es válido.'),
   proveedor: z.enum(['REVENUE_CAT', 'MANUAL']),

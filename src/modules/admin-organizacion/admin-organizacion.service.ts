@@ -1,9 +1,12 @@
 import { prisma } from '../../config/database.js';
 import { NotFoundError } from '../../shared/errors/custom.error.js';
-import type { actualizarSuscripcionOrgSchema } from './admin-organizacion.schema.js';
+import { getPagination, getPaginationMeta } from '../../utils/pagination.js';
+import type { actualizarSuscripcionOrgSchema, listarOrganizacionesQuerySchema } from './admin-organizacion.schema.js';
 import type { z } from 'zod';
+import type { EstadoSuscripcion, Prisma } from '@prisma/client';
 
 type ActualizarSuscripcionInput = z.infer<typeof actualizarSuscripcionOrgSchema>;
+type ListarOrganizacionesQuery = Partial<z.infer<typeof listarOrganizacionesQuerySchema>>;
 
 /** undefined = no tocar el campo, null = limpiarlo, string = fecha nueva. */
 function normalizarFecha(valor?: string | null): Date | null | undefined {
@@ -13,18 +16,52 @@ function normalizarFecha(valor?: string | null): Date | null | undefined {
 }
 
 export class AdminOrganizacionService {
-  /** Catálogo de organizaciones con su suscripción y uso, para el panel de PLATAFORMA. */
-  async listar() {
-    const organizaciones = await prisma.organizacion.findMany({
-      where: { deletedAt: null },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        suscripcion: { include: { plan: true } },
-        _count: { select: { usuarios: true, clientes: true } },
-      },
-    });
+  /** Catálogo paginado y filtrado de organizaciones para el panel de PLATAFORMA. */
+  async listar(query: ListarOrganizacionesQuery = {}) {
+    const page = query.page && query.page > 0 ? Number(query.page) : 1;
+    const limit = query.limit && query.limit > 0 ? Number(query.limit) : 10;
+    const { skip, take } = getPagination({ page, limit });
 
-    return organizaciones.map((org) => ({
+    const search = query.search?.trim();
+    const estado = query.estado;
+    const planId = query.planId;
+
+    const where: Prisma.OrganizacionWhereInput = {
+      deletedAt: null,
+      ...(search
+        ? {
+            OR: [
+              { nombre: { contains: search, mode: 'insensitive' } },
+              { id: { contains: search, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+      ...(estado && estado !== 'TODOS'
+        ? estado === 'SIN_SUSCRIPCION'
+          ? { suscripcion: null }
+          : { suscripcion: { estado: estado as EstadoSuscripcion } }
+        : {}),
+      ...(planId && planId !== 'TODOS'
+        ? { suscripcion: { planId } }
+        : {}),
+    };
+
+    const [totalItems, organizaciones, stats] = await Promise.all([
+      prisma.organizacion.count({ where }),
+      prisma.organizacion.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take,
+        include: {
+          suscripcion: { include: { plan: true } },
+          _count: { select: { usuarios: true, clientes: true } },
+        },
+      }),
+      this.obtenerEstadisticas(),
+    ]);
+
+    const data = organizaciones.map((org) => ({
       id: org.id,
       nombre: org.nombre,
       createdAt: org.createdAt,
@@ -48,17 +85,34 @@ export class AdminOrganizacionService {
           }
         : null,
     }));
+
+    const meta = {
+      ...getPaginationMeta(page, limit, totalItems),
+      stats,
+    };
+
+    return { data, meta };
   }
 
-  /**
-   * Alta/edición manual de la suscripción de una organización — para comp de
-   * clientes, extender un trial, o corregir un estado que un webhook de
-   * RevenueCat no llegó a actualizar. Si la organización todavía no tiene fila
-   * de Suscripcion (orgs muy viejas, o el seed no había corrido) la crea.
-   *
-   * Aviso: si la organización SÍ tiene una suscripción real de RevenueCat, el
-   * próximo webhook que llegue puede sobreescribir este ajuste manual.
-   */
+  /** Estadísticas globales para las tarjetas KPI de la cabecera. */
+  private async obtenerEstadisticas() {
+    const [total, activas, trial, sinSub] = await Promise.all([
+      prisma.organizacion.count({ where: { deletedAt: null } }),
+      prisma.organizacion.count({ where: { deletedAt: null, suscripcion: { estado: 'ACTIVA' } } }),
+      prisma.organizacion.count({ where: { deletedAt: null, suscripcion: { estado: 'TRIAL' } } }),
+      prisma.organizacion.count({ where: { deletedAt: null, suscripcion: null } }),
+    ]);
+
+    return {
+      total,
+      activas,
+      trial,
+      bloqueadas: Math.max(0, total - activas - trial - sinSub),
+      sinSub,
+    };
+  }
+
+  /** Alta/edición manual de la suscripción de una organización. */
   async actualizarSuscripcion(organizacionId: string, data: ActualizarSuscripcionInput) {
     const organizacion = await prisma.organizacion.findUnique({ where: { id: organizacionId } });
     if (!organizacion) {
@@ -72,9 +126,6 @@ export class AdminOrganizacionService {
 
     const actual = await prisma.suscripcion.findUnique({ where: { organizacionId } });
     const periodoFinEn = normalizarFecha(data.periodoFinEn);
-    // Si se registra un `periodoFinEn` nuevo (ej. un pago en efectivo recién
-    // cobrado), se limpia la marca del aviso anterior para que el nuevo
-    // periodo vuelva a avisar cuando corresponda — ver suscripcion-vencimiento.worker.ts.
     const periodoFinEnCambio = periodoFinEn !== undefined && periodoFinEn?.getTime() !== actual?.periodoFinEn?.getTime();
 
     const campos = {
@@ -97,12 +148,7 @@ export class AdminOrganizacionService {
     });
   }
 
-  /**
-   * Bitácora de auditoría de una organización — hoy solo se registran
-   * eliminaciones de pagos (ver sincronizacion.service.ts, la única acción de
-   * borrado gateada explícitamente por un permiso en el app). El modelo
-   * Auditoria existe desde antes; este es el primer código que lo lee.
-   */
+  /** Bitácora de auditoría de una organización. */
   async listarAuditoria(organizacionId: string) {
     const organizacion = await prisma.organizacion.findUnique({ where: { id: organizacionId } });
     if (!organizacion) {

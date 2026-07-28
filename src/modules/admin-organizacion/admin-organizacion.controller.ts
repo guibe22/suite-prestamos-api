@@ -5,10 +5,10 @@ import { sendSuccess } from '../../shared/responses/api.response.js';
 export class AdminOrganizacionController {
   private service = new AdminOrganizacionService();
 
-  listar = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  listar = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const organizaciones = await this.service.listar();
-      sendSuccess(res, 'Organizaciones recuperadas con éxito.', organizaciones);
+      const { data, meta } = await this.service.listar(req.query as any);
+      sendSuccess(res, 'Organizaciones recuperadas con éxito.', data, meta);
     } catch (error) {
       next(error);
     }
