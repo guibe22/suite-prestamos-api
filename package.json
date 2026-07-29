@@ -21,7 +21,8 @@
     "db:seed": "tsx prisma/seed.ts",
     "create-superadmin": "tsx src/scripts/create-superadmin.ts",
     "migrar-proveedor-pago": "tsx src/scripts/migrar-proveedor-pago.ts",
-    "limpiar-datos": "tsx src/scripts/limpiar-datos.ts"
+    "limpiar-datos": "tsx src/scripts/limpiar-datos.ts",
+    "calibrar-scoring": "tsx src/scripts/calibrar-scoring.ts"
   },
   "keywords": [
     "suite",
