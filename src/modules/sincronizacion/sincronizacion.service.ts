@@ -182,6 +182,15 @@ export class SincronizacionService {
   }
 
   /**
+   * Modelo "Zero-Route": solo ADMIN/SUPER_ADMIN tienen acceso global a toda
+   * la organización. Cualquier otro rol (GERENTE, CAJERO, COBRADOR) queda
+   * restringido a su ruta asignada (ver `rutaAccessFilter`).
+   */
+  private esRolRestringidoPorRuta(rol: string): boolean {
+    return rol !== 'ADMIN' && rol !== 'SUPER_ADMIN';
+  }
+
+  /**
    * Filtro `where` que restringe cualquier registro a la organización del
    * usuario. Se aplica en TODA escritura del push (update/delete y verificación
    * de propiedad en create) para impedir accesos cross-tenant: sin esto, un
@@ -222,13 +231,14 @@ export class SincronizacionService {
    * alcance de rol) en un único objeto por tabla — no se combina por spread con
    * `orgScopeWhere` porque varias tablas anidan la condición bajo la misma clave
    * (`cliente`, `prestamo`) y un merge superficial pisaría la mitad de la condición.
-   * Restringe la escritura de un COBRADOR a su(s) ruta(s) asignada(s) vía
-   * `Ruta.responsableId` y a sus propias jornadas, para que no pueda editar/borrar
-   * registros de otra ruta empujando un `push` manual. Para cualquier otro rol,
-   * es idéntico a `orgScopeWhere`.
+   * Restringe la escritura de cualquier rol no-Admin (GERENTE, CAJERO,
+   * COBRADOR) a su(s) ruta(s) asignada(s) vía `Ruta.responsableId`/colaborador
+   * y a sus propias jornadas/caja, para que no pueda editar/borrar registros
+   * de otra ruta empujando un `push` manual. Para ADMIN/SUPER_ADMIN, es
+   * idéntico a `orgScopeWhere`.
    */
   private scopeWhere(tableName: string, organizacionId: string, actorId: string, actorRol: string): any {
-    if (actorRol !== 'COBRADOR') return this.orgScopeWhere(tableName, organizacionId);
+    if (!this.esRolRestringidoPorRuta(actorRol)) return this.orgScopeWhere(tableName, organizacionId);
     switch (tableName) {
       case 'rutas':
         return { organizacionId, ...this.rutaAccessFilter(actorId) };
@@ -248,8 +258,9 @@ export class SincronizacionService {
         return { caja: { organizacionId, estado: 'ABIERTA', usuarioId: actorId } };
       case 'ruta_colaboradores':
         // Gestionar colaboradores es una decisión administrativa bloqueada
-        // más arriba (push()) para no-ADMIN; este where nunca debe matchear
-        // un COBRADOR aunque ese gate cambie en el futuro.
+        // más arriba (push()) para no-ADMIN (salvo GERENTE, ver gate explícito
+        // en push()); este where nunca debe matchear un rol restringido aunque
+        // ese gate cambie en el futuro.
         return { id: '' };
       case 'referencias_cliente':
       case 'avales':
@@ -273,15 +284,15 @@ export class SincronizacionService {
     actorId: string,
     actorRol: string
   ): Promise<boolean> {
-    const esCobrador = actorRol === 'COBRADOR';
+    const restringido = this.esRolRestringidoPorRuta(actorRol);
     switch (tableName) {
       case 'clientes': {
-        // Antes se saltaba esta validación por completo para ADMIN/CAJERO,
+        // Antes se saltaba esta validación por completo para ADMIN/GERENTE/CAJERO,
         // dejando que un cliente quedara con rutaId de otra organización
         // (ensureRutaExists solo comprueba existencia, no organización).
         if (!data.rutaId) return false;
         const ruta = await tx.ruta.findFirst({
-          where: { id: data.rutaId, organizacionId, ...(esCobrador ? this.rutaAccessFilter(actorId) : {}) },
+          where: { id: data.rutaId, organizacionId, ...(restringido ? this.rutaAccessFilter(actorId) : {}) },
           select: { id: true },
         });
         return !!ruta;
@@ -292,7 +303,7 @@ export class SincronizacionService {
       case 'documentos_cliente': {
         if (!data.clienteId) return false;
         const c = await tx.cliente.findFirst({
-          where: { id: data.clienteId, organizacionId, ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
+          where: { id: data.clienteId, organizacionId, ...(restringido ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
           select: { id: true },
         });
         return !!c;
@@ -303,7 +314,7 @@ export class SincronizacionService {
         const p = await tx.prestamo.findFirst({
           where: {
             id: data.prestamoId,
-            cliente: { organizacionId, ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
+            cliente: { organizacionId, ...(restringido ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
           },
           select: { id: true },
         });
@@ -316,17 +327,17 @@ export class SincronizacionService {
           where: {
             id: data.cajaId,
             organizacionId,
-            ...(esCobrador ? { estado: 'ABIERTA', usuarioId: actorId } : {}),
+            ...(restringido ? { estado: 'ABIERTA', usuarioId: actorId } : {}),
           },
           select: { id: true },
         });
         return !!caja;
       }
       case 'jornadas_cobranza': {
-        if (esCobrador && data.usuarioId && data.usuarioId !== actorId) return false;
+        if (restringido && data.usuarioId && data.usuarioId !== actorId) return false;
         if (!data.rutaId) return false;
         const ruta = await tx.ruta.findFirst({
-          where: { id: data.rutaId, organizacionId, ...(esCobrador ? this.rutaAccessFilter(actorId) : {}) },
+          where: { id: data.rutaId, organizacionId, ...(restringido ? this.rutaAccessFilter(actorId) : {}) },
           select: { id: true },
         });
         return !!ruta;
@@ -382,14 +393,15 @@ export class SincronizacionService {
 
   /**
    * Pull: Retorna los cambios del servidor ocurridos desde lastPulledAt para la organizacion dada.
-   * Un COBRADOR solo recibe sus propias rutas asignadas (Ruta.responsableId) y todo lo que cuelga
+   * Cualquier rol no-Admin (GERENTE, CAJERO, COBRADOR) solo recibe sus propias
+   * rutas asignadas (Ruta.responsableId o colaborador) y todo lo que cuelga
    * de ellas (clientes/préstamos/cuotas/pagos), sus propias jornadas, y solo cajas ABIERTAS (para
-   * poder seguir registrando gastos del día). ADMIN/SUPER_ADMIN/CAJERO reciben toda la organización.
+   * poder seguir registrando gastos del día). Solo ADMIN/SUPER_ADMIN reciben toda la organización.
    */
   async pull(lastPulledAt: number, organizacionId: string, actorId: string, actorRol: string): Promise<PullResponse> {
     const serverTimestamp = Date.now();
     const lastPulledDate = lastPulledAt > 0 ? new Date(lastPulledAt) : null;
-    const esCobrador = actorRol === 'COBRADOR';
+    const restringido = this.esRolRestringidoPorRuta(actorRol);
 
     logger.info(
       `📥 [SYNC PULL] Inicio | org=${organizacionId} | actor=${actorId} (${actorRol}) | ${
@@ -420,7 +432,7 @@ export class SincronizacionService {
         // Nunca se envía el hash de la contraseña a los dispositivos.
         omit: { password: true },
         whereClause: (date: Date | null) => ({
-          ...(esCobrador ? { id: actorId } : { organizacionId }),
+          ...(restringido ? { id: actorId } : { organizacionId }),
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -429,7 +441,7 @@ export class SincronizacionService {
         model: prisma.cliente,
         whereClause: (date: Date | null) => ({
           organizacionId,
-          ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}),
+          ...(restringido ? { ruta: this.rutaAccessFilter(actorId) } : {}),
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -437,7 +449,7 @@ export class SincronizacionService {
         name: 'referencias_cliente',
         model: prisma.referenciaCliente,
         whereClause: (date: Date | null) => ({
-          cliente: { organizacionId, ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
+          cliente: { organizacionId, ...(restringido ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
           ...(date ? { createdAt: { gt: date } } : {}),
         }),
       },
@@ -445,7 +457,7 @@ export class SincronizacionService {
         name: 'avales',
         model: prisma.aval,
         whereClause: (date: Date | null) => ({
-          cliente: { organizacionId, ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
+          cliente: { organizacionId, ...(restringido ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
           ...(date ? { createdAt: { gt: date } } : {}),
         }),
       },
@@ -453,7 +465,7 @@ export class SincronizacionService {
         name: 'documentos_cliente',
         model: prisma.documentoCliente,
         whereClause: (date: Date | null) => ({
-          cliente: { organizacionId, ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
+          cliente: { organizacionId, ...(restringido ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
           ...(date ? { createdAt: { gt: date } } : {}),
         }),
       },
@@ -461,7 +473,7 @@ export class SincronizacionService {
         name: 'prestamos',
         model: prisma.prestamo,
         whereClause: (date: Date | null) => ({
-          cliente: { organizacionId, ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
+          cliente: { organizacionId, ...(restringido ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -470,7 +482,7 @@ export class SincronizacionService {
         model: prisma.cuota,
         whereClause: (date: Date | null) => ({
           prestamo: {
-            cliente: { organizacionId, ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
+            cliente: { organizacionId, ...(restringido ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
           },
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
@@ -480,7 +492,7 @@ export class SincronizacionService {
         model: prisma.pago,
         whereClause: (date: Date | null) => ({
           prestamo: {
-            cliente: { organizacionId, ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
+            cliente: { organizacionId, ...(restringido ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
           },
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
@@ -490,7 +502,7 @@ export class SincronizacionService {
         model: prisma.caja,
         whereClause: (date: Date | null) => ({
           organizacionId,
-          ...(esCobrador ? { estado: 'ABIERTA', usuarioId: actorId } : {}),
+          ...(restringido ? { estado: 'ABIERTA', usuarioId: actorId } : {}),
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -498,7 +510,7 @@ export class SincronizacionService {
         name: 'gastos',
         model: prisma.gasto,
         whereClause: (date: Date | null) => ({
-          caja: { organizacionId, ...(esCobrador ? { estado: 'ABIERTA', usuarioId: actorId } : {}) },
+          caja: { organizacionId, ...(restringido ? { estado: 'ABIERTA', usuarioId: actorId } : {}) },
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -507,7 +519,7 @@ export class SincronizacionService {
         model: prisma.ruta,
         whereClause: (date: Date | null) => ({
           organizacionId,
-          ...(esCobrador ? this.rutaAccessFilter(actorId) : {}),
+          ...(restringido ? this.rutaAccessFilter(actorId) : {}),
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -515,7 +527,7 @@ export class SincronizacionService {
         name: 'ruta_colaboradores',
         model: prisma.rutaColaborador,
         whereClause: (date: Date | null) => ({
-          ruta: { organizacionId, ...(esCobrador ? this.rutaAccessFilter(actorId) : {}) },
+          ruta: { organizacionId, ...(restringido ? this.rutaAccessFilter(actorId) : {}) },
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
@@ -523,7 +535,7 @@ export class SincronizacionService {
         name: 'movimientos_cajas',
         model: prisma.movimientoCaja,
         whereClause: (date: Date | null) => ({
-          caja: { organizacionId, ...(esCobrador ? { estado: 'ABIERTA', usuarioId: actorId } : {}) },
+          caja: { organizacionId, ...(restringido ? { estado: 'ABIERTA', usuarioId: actorId } : {}) },
           ...(date ? { createdAt: { gt: date } } : {}),
         }),
       },
@@ -535,7 +547,7 @@ export class SincronizacionService {
         // progreso de la jornada que corrió su compañero en la misma ruta.
         whereClause: (date: Date | null) => ({
           organizacionId,
-          ...(esCobrador ? { ruta: this.rutaAccessFilter(actorId) } : {}),
+          ...(restringido ? { ruta: this.rutaAccessFilter(actorId) } : {}),
           ...(date ? { updatedAt: { gt: date } } : {}),
         }),
       },
