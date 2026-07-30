@@ -271,9 +271,15 @@ export class SuscripcionService {
 
     const finGracia = periodoFinEn + (suscripcion.diasGraciaSuspension ?? 0) * MS_DIA;
     if (ahora >= finGracia) {
+      // `fechaInicioBloqueo()` usa `updatedAt` como ancla para contar la
+      // gracia GLOBAL (suscripcionGraciaDias) una vez SUSPENDIDA. Si esta
+      // transición se detecta tarde (ej. nadie abrió la app en semanas), sin
+      // fijar `updatedAt` explícitamente a `finGracia` la gracia global
+      // arrancaría de cero recién ahora — dándole gracia extra injustificada
+      // a una organización que ya debió bloquearse hace tiempo.
       const actualizada = await prisma.suscripcion.update({
         where: { id: suscripcion.id },
-        data: { estado: 'SUSPENDIDA' },
+        data: { estado: 'SUSPENDIDA', updatedAt: new Date(finGracia) },
       });
       return { suscripcion: actualizada, diasRestantesGraciaManual: null };
     }

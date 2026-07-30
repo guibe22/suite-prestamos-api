@@ -62,18 +62,36 @@ describe('SuscripcionService.obtenerNivelAcceso — vencimiento manual perezoso'
       periodoFinEn: new Date(Date.now() - 1 * DIA_MS),
     });
     mockPrisma.suscripcion.findUnique.mockResolvedValue(sub);
-    mockPrisma.suscripcion.update.mockImplementation(({ data }) =>
-      Promise.resolve({ ...sub, ...data, updatedAt: new Date() })
-    );
+    mockPrisma.suscripcion.update.mockImplementation(({ data }) => Promise.resolve({ ...sub, ...data }));
 
     const resultado = await service.obtenerNivelAcceso('org-1');
 
     expect(mockPrisma.suscripcion.update).toHaveBeenCalledWith({
       where: { id: 'sub-1' },
-      data: { estado: 'SUSPENDIDA' },
+      data: { estado: 'SUSPENDIDA', updatedAt: expect.any(Date) },
     });
     expect(resultado.diasRestantesGraciaManual).toBeNull();
     expect(resultado.nivel).not.toBe('ACTIVO');
+  });
+
+  it('si se detecta la suspensión mucho después del vencimiento real, la gracia global no arranca de cero', async () => {
+    // Debió suspenderse hace 30 días (periodoFinEn + 0 de gracia propia), pero
+    // nadie abrió la app hasta ahora — sin fijar `updatedAt` a ese momento
+    // real, fechaInicioBloqueo() lo tomaría como "ahora" y regalaría una
+    // gracia global (7 días) completa e injustificada.
+    const finGraciaReal = Date.now() - 30 * DIA_MS;
+    const sub = suscripcionManual({
+      diasGraciaSuspension: 0,
+      periodoFinEn: new Date(finGraciaReal),
+    });
+    mockPrisma.suscripcion.findUnique.mockResolvedValue(sub);
+    mockPrisma.suscripcion.update.mockImplementation(({ data }) => Promise.resolve({ ...sub, ...data }));
+
+    const resultado = await service.obtenerNivelAcceso('org-1');
+
+    const llamada = mockPrisma.suscripcion.update.mock.calls[0][0];
+    expect(llamada.data.updatedAt.getTime()).toBe(finGraciaReal);
+    expect(resultado.nivel).toBe('BLOQUEADO');
   });
 
   it('vencida pero dentro de su propia diasGraciaSuspension: sigue ACTIVA e informa los días restantes', async () => {

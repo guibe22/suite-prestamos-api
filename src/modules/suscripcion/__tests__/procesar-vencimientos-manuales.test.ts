@@ -54,7 +54,7 @@ describe('SuscripcionService.procesarVencimientosManuales', () => {
     expect(resultado.suspendidos).toBe(1);
     expect(mockPrisma.suscripcion.update).toHaveBeenCalledWith({
       where: { id: 'sub-1' },
-      data: { estado: 'SUSPENDIDA' },
+      data: { estado: 'SUSPENDIDA', updatedAt: expect.any(Date) },
     });
   });
 
