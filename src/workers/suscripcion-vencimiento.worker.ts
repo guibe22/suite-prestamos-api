@@ -9,8 +9,8 @@ export const startSuscripcionVencimientoWorker = (): void => {
   cron.schedule('30 3 * * *', () => {
     suscripcionService
       .procesarVencimientosManuales()
-      .then(({ avisados, suspendidos }) => {
-        logger.info(`⏰ [suscripcion-vencimiento] ${avisados} aviso(s) enviado(s), ${suspendidos} suspendida(s).`);
+      .then(({ suspendidos }) => {
+        logger.info(`⏰ [suscripcion-vencimiento] ${suspendidos} suscripción(es) suspendida(s).`);
       })
       .catch((e) => logger.error(e, '💥 Error en suscripcion-vencimiento.worker'));
   });

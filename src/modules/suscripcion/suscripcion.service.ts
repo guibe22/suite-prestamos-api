@@ -3,7 +3,6 @@ import { env } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
 import { ConfiguracionService } from '../configuracion/configuracion.service.js';
 import { ForbiddenError, NotFoundError } from '../../shared/errors/custom.error.js';
-import { sendEmail } from '../../shared/email/email.service.js';
 import type { EventoRevenueCat } from './revenuecat.client.js';
 import type { Prisma, ProveedorPago, Suscripcion } from '@prisma/client';
 
@@ -102,6 +101,7 @@ export class SuscripcionService {
       proveedor: suscripcion.proveedor,
       trialTerminaEn: suscripcion.trialTerminaEn,
       periodoFinEn: suscripcion.periodoFinEn,
+      avisoDias: suscripcion.avisoDias,
       canceladaEn: suscripcion.canceladaEn,
       ultimoPagoEn: suscripcion.ultimoPagoEn,
       plan: {
@@ -380,38 +380,27 @@ export class SuscripcionService {
    * suscripciones MANUAL (pago en efectivo/transferencia, ej. plan
    * Empresarial) contra su `periodoFinEn`, ya que a diferencia de RevenueCat
    * no hay webhook que avise de un vencimiento — nadie más va a decir "este
-   * pago venció".
+   * pago venció". Pasado `diasGraciaSuspension` días desde el vencimiento (0
+   * si no está configurado), pasa el estado a SUSPENDIDA — a partir de ahí
+   * aplica el mismo flujo de gracia global que el resto del sistema
+   * (ConfiguracionSistema.suscripcionGraciaDias vía obtenerNivelAcceso), el
+   * mismo "procedimiento normal" que sigue cualquier suscripción no activa.
    *
-   * 1. Avisa por correo a los ADMIN de la organización `avisoDias` antes del
-   *    vencimiento (una sola vez por periodo, vía `avisoEnviadoEn`).
-   * 2. Pasado `diasGraciaSuspension` días desde el vencimiento (0 si no está
-   *    configurado), pasa el estado a SUSPENDIDA — a partir de ahí aplica el
-   *    mismo flujo de gracia global que el resto del sistema
-   *    (ConfiguracionSistema.suscripcionGraciaDias vía obtenerNivelAcceso),
-   *    el mismo "procedimiento normal" que sigue cualquier suscripción no
-   *    activa.
+   * El aviso previo al vencimiento ya NO se envía por correo desde aquí (ver
+   * suite-prestamos-pago-efectivo-empresarial): la app móvil lo calcula del
+   * lado del cliente a partir de `avisoDias`/`periodoFinEn` (obtenerMiSuscripcion)
+   * y lo muestra como modal al abrir — ver AvisoVencimientoModal.
    */
-  async procesarVencimientosManuales(): Promise<{ avisados: number; suspendidos: number }> {
+  async procesarVencimientosManuales(): Promise<{ suspendidos: number }> {
     const ahora = new Date();
     const suscripciones = await prisma.suscripcion.findMany({
       where: { proveedor: 'MANUAL', estado: 'ACTIVA', periodoFinEn: { not: null } },
     });
 
-    let avisados = 0;
     let suspendidos = 0;
 
     for (const s of suscripciones) {
       const periodoFinEn = s.periodoFinEn as Date;
-
-      if (s.avisoDias !== null && s.avisoEnviadoEn === null) {
-        const inicioAviso = new Date(periodoFinEn.getTime() - s.avisoDias * MS_DIA);
-        if (ahora >= inicioAviso) {
-          await this.enviarAvisoVencimiento(s.organizacionId, periodoFinEn);
-          await prisma.suscripcion.update({ where: { id: s.id }, data: { avisoEnviadoEn: ahora } });
-          avisados++;
-        }
-      }
-
       const finGracia = new Date(periodoFinEn.getTime() + (s.diasGraciaSuspension ?? 0) * MS_DIA);
       if (ahora >= finGracia) {
         await prisma.suscripcion.update({ where: { id: s.id }, data: { estado: 'SUSPENDIDA' } });
@@ -419,33 +408,6 @@ export class SuscripcionService {
       }
     }
 
-    return { avisados, suspendidos };
-  }
-
-  private async enviarAvisoVencimiento(organizacionId: string, periodoFinEn: Date): Promise<void> {
-    const admins = await prisma.usuario.findMany({
-      where: { organizacionId, deletedAt: null, rol: { nombre: 'ADMIN' } },
-      select: { email: true, nombre: true },
-    });
-
-    const fechaTexto = periodoFinEn.toLocaleDateString('es-DO', { day: 'numeric', month: 'long', year: 'numeric' });
-
-    await Promise.all(
-      admins.map((admin) =>
-        sendEmail({
-          to: admin.email,
-          subject: `Tu pago se vence el ${fechaTexto}`,
-          devLogFallback: `Aviso de vencimiento (organización ${organizacionId}): vence el ${fechaTexto}`,
-          html: `
-            <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px; border: 1px solid #f0f0f0; border-radius: 16px; background-color: #ffffff;">
-              <h2 style="color: #d97706; font-size: 22px; margin-bottom: 8px;">Tu pago se acerca</h2>
-              <p style="color: #4b5563; font-size: 15px; line-height: 24px;">Hola ${admin.nombre}, el periodo pagado de tu suscripción a <strong>Suite Préstamos</strong> vence el <strong>${fechaTexto}</strong>. Para evitar interrupciones, coordina el próximo pago antes de esa fecha.</p>
-            </div>
-          `,
-        }).catch((error) =>
-          logger.error({ err: error, organizacionId }, 'No se pudo enviar el aviso de vencimiento por correo')
-        )
-      )
-    );
+    return { suspendidos };
   }
 }
