@@ -14,6 +14,14 @@ export interface EstadoAccesoSuscripcion {
   nivel: NivelAccesoSuscripcion;
   /** Solo tiene sentido cuando nivel === 'GRACIA'. */
   diasRestantesGracia: number | null;
+  /**
+   * Solo tiene sentido cuando nivel === 'ACTIVO' Y la suscripción es MANUAL:
+   * ya pasó `periodoFinEn` pero todavía está dentro de `diasGraciaSuspension`
+   * propio (antes de que `evaluarYAplicarVencimientoManual` la pase a
+   * SUSPENDIDA) — distinto de `diasRestantesGracia`, que es la gracia GLOBAL
+   * post-suspensión (`ConfiguracionSistema.suscripcionGraciaDias`).
+   */
+  diasRestantesGraciaManual: number | null;
   soporteTelefono: string | null;
   soporteEmail: string | null;
 }
@@ -208,17 +216,24 @@ export class SuscripcionService {
     const config = await this.configuracionService.obtener();
     const contacto = { soporteTelefono: config.soporteTelefono, soporteEmail: config.soporteEmail };
 
-    const suscripcion = await prisma.suscripcion.findUnique({ where: { organizacionId } });
+    let suscripcion = await prisma.suscripcion.findUnique({ where: { organizacionId } });
     if (!suscripcion) {
-      return { nivel: 'BLOQUEADO', diasRestantesGracia: null, ...contacto };
+      return { nivel: 'BLOQUEADO', diasRestantesGracia: null, diasRestantesGraciaManual: null, ...contacto };
     }
+
+    // Aparte del cron diario (suscripcion-vencimiento.worker.ts), se reevalúa
+    // aquí en cada consulta — así una suscripción MANUAL vencida se suspende
+    // (o muestra su cuenta regresiva) en cuanto alguien entra a la app, sin
+    // esperar a la próxima corrida de las 3:30am.
+    const { suscripcion: actualizada, diasRestantesGraciaManual } = await this.evaluarYAplicarVencimientoManual(suscripcion);
+    suscripcion = actualizada;
 
     const activa =
       suscripcion.estado === 'ACTIVA' ||
       (suscripcion.estado === 'TRIAL' &&
         (!suscripcion.trialTerminaEn || suscripcion.trialTerminaEn.getTime() > Date.now()));
     if (activa) {
-      return { nivel: 'ACTIVO', diasRestantesGracia: null, ...contacto };
+      return { nivel: 'ACTIVO', diasRestantesGracia: null, diasRestantesGraciaManual, ...contacto };
     }
 
     const graciaDias = config.suscripcionGraciaDias;
@@ -227,10 +242,44 @@ export class SuscripcionService {
 
     if (graciaDias > 0 && diasTranscurridos < graciaDias) {
       const diasRestantesGracia = Math.max(0, Math.ceil(graciaDias - diasTranscurridos));
-      return { nivel: 'GRACIA', diasRestantesGracia, ...contacto };
+      return { nivel: 'GRACIA', diasRestantesGracia, diasRestantesGraciaManual: null, ...contacto };
     }
 
-    return { nivel: 'BLOQUEADO', diasRestantesGracia: 0, ...contacto };
+    return { nivel: 'BLOQUEADO', diasRestantesGracia: 0, diasRestantesGraciaManual: null, ...contacto };
+  }
+
+  /**
+   * Evaluación perezosa (on-read) del vencimiento MANUAL, mismo criterio que
+   * `procesarVencimientosManuales` pero para una sola organización: si ya
+   * pasó `periodoFinEn + diasGraciaSuspension`, suspende de una vez (no
+   * espera al cron); si pasó `periodoFinEn` pero sigue dentro de su propia
+   * `diasGraciaSuspension`, no toca el estado (sigue ACTIVA) pero informa
+   * cuántos días de gracia le quedan para que la app lo muestre.
+   */
+  private async evaluarYAplicarVencimientoManual(
+    suscripcion: Suscripcion
+  ): Promise<{ suscripcion: Suscripcion; diasRestantesGraciaManual: number | null }> {
+    if (suscripcion.proveedor !== 'MANUAL' || suscripcion.estado !== 'ACTIVA' || !suscripcion.periodoFinEn) {
+      return { suscripcion, diasRestantesGraciaManual: null };
+    }
+
+    const ahora = Date.now();
+    const periodoFinEn = suscripcion.periodoFinEn.getTime();
+    if (ahora < periodoFinEn) {
+      return { suscripcion, diasRestantesGraciaManual: null };
+    }
+
+    const finGracia = periodoFinEn + (suscripcion.diasGraciaSuspension ?? 0) * MS_DIA;
+    if (ahora >= finGracia) {
+      const actualizada = await prisma.suscripcion.update({
+        where: { id: suscripcion.id },
+        data: { estado: 'SUSPENDIDA' },
+      });
+      return { suscripcion: actualizada, diasRestantesGraciaManual: null };
+    }
+
+    const diasRestantesGraciaManual = Math.max(0, Math.ceil((finGracia - ahora) / MS_DIA));
+    return { suscripcion, diasRestantesGraciaManual };
   }
 
   /**
@@ -392,7 +441,6 @@ export class SuscripcionService {
    * y lo muestra como modal al abrir — ver AvisoVencimientoModal.
    */
   async procesarVencimientosManuales(): Promise<{ suspendidos: number }> {
-    const ahora = new Date();
     const suscripciones = await prisma.suscripcion.findMany({
       where: { proveedor: 'MANUAL', estado: 'ACTIVA', periodoFinEn: { not: null } },
     });
@@ -400,12 +448,8 @@ export class SuscripcionService {
     let suspendidos = 0;
 
     for (const s of suscripciones) {
-      const periodoFinEn = s.periodoFinEn as Date;
-      const finGracia = new Date(periodoFinEn.getTime() + (s.diasGraciaSuspension ?? 0) * MS_DIA);
-      if (ahora >= finGracia) {
-        await prisma.suscripcion.update({ where: { id: s.id }, data: { estado: 'SUSPENDIDA' } });
-        suspendidos++;
-      }
+      const { suscripcion: actualizada } = await this.evaluarYAplicarVencimientoManual(s);
+      if (actualizada.estado === 'SUSPENDIDA') suspendidos++;
     }
 
     return { suspendidos };

@@ -27,6 +27,9 @@ describe('SuscripcionService.procesarVencimientosManuales', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.suscripcion.update.mockImplementation(({ where, data }) =>
+      Promise.resolve({ id: where.id, ...data })
+    );
   });
 
   it('no hace nada si no hay suscripciones MANUAL activas con periodoFinEn', async () => {
