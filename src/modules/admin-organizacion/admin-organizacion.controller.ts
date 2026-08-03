@@ -31,4 +31,32 @@ export class AdminOrganizacionController {
       next(error);
     }
   };
+
+  eliminarRegistro = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { tipo, registroId } = req.body;
+      const resultado = await this.service.eliminarRegistroSoporte(req.params.id, tipo, registroId);
+      sendSuccess(res, resultado.mensaje, resultado);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  exportarDatos = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const datos = await this.service.exportarClientesYPrestamos(req.params.id);
+      sendSuccess(res, 'Estructura de clientes y préstamos exportada con éxito.', datos);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  importarDatos = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const resultado = await this.service.importarClientesYPrestamos(req.params.id, req.body);
+      sendSuccess(res, 'Clientes y préstamos importados con éxito.', resultado);
+    } catch (error) {
+      next(error);
+    }
+  };
 }
