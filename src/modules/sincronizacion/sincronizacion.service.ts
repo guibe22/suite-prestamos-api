@@ -297,7 +297,26 @@ export class SincronizacionService {
         });
         return !!ruta;
       }
-      case 'prestamos':
+      case 'prestamos': {
+        if (!data.clienteId) return false;
+        const c = await tx.cliente.findFirst({
+          where: { id: data.clienteId, organizacionId, ...(restringido ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
+          select: { id: true },
+        });
+        if (!c) return false;
+        // referenciaClienteId es opcional (quién recomendó a este cliente):
+        // si viene, debe ser un cliente real de la misma organización/ruta —
+        // sin esto, un push podría enlazar el préstamo al cliente de OTRA
+        // organización con solo mandar su id.
+        if (data.referenciaClienteId) {
+          const ref = await tx.cliente.findFirst({
+            where: { id: data.referenciaClienteId, organizacionId, ...(restringido ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
+            select: { id: true },
+          });
+          if (!ref) return false;
+        }
+        return true;
+      }
       case 'referencias_cliente':
       case 'avales':
       case 'documentos_cliente': {

@@ -392,10 +392,13 @@ model Cliente {
   deletedBy String?
 
   // Relaciones
-  prestamos   Prestamo[]
-  referencias ReferenciaCliente[]
-  avales      Aval[]
-  documentos  DocumentoCliente[]
+  prestamos          Prestamo[]
+  // Préstamos de OTROS clientes en los que este cliente figura como
+  // referencia/recomendador (ver Prestamo.referenciaClienteId).
+  prestamosReferidos Prestamo[]          @relation("PrestamoReferencia")
+  referencias        ReferenciaCliente[]
+  avales             Aval[]
+  documentos         DocumentoCliente[]
 
   @@unique([organizacionId, codigo])
   @@unique([organizacionId, identificacion])
@@ -490,6 +493,22 @@ model Prestamo {
   renovadoDePrestamoId String?
   // Firma del cliente (PNG en base64) capturada antes de guardar el préstamo.
   firmaBase64          String? @db.Text
+
+  // Cliente de referencia (opcional): quién recomendó a este cliente para
+  // este préstamo puntual — puede repetirse o variar en cada préstamo, no es
+  // un dato fijo del cliente (a diferencia del Aval, que es por-cliente).
+  // Si la persona ya es cliente del sistema, referenciaClienteId la enlaza
+  // (permite consultar "a quién ha referido tal cliente"); si no lo es
+  // todavía, solo quedan sus datos sueltos abajo, sin crear un Cliente.
+  referenciaClienteId      String?
+  referenciaCliente        Cliente? @relation("PrestamoReferencia", fields: [referenciaClienteId], references: [id])
+  referenciaNombre         String?
+  referenciaTelefono       String?
+  referenciaIdentificacion String?
+  // Firma de la referencia (PNG en base64), igual que firmaBase64 pero
+  // opcional — solo si la empresa decide hacerla firmar también el contrato.
+  referenciaFirmaBase64    String? @db.Text
+
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
   deletedAt        DateTime?
@@ -503,6 +522,7 @@ model Prestamo {
   // > lastPulledAt) como cualquier lookup por cliente hacen sequential scan
   // a medida que crece la tabla, para TODAS las organizaciones del sistema.
   @@index([clienteId])
+  @@index([referenciaClienteId])
   @@index([updatedAt])
 }
 
