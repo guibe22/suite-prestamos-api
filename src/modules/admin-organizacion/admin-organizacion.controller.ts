@@ -32,6 +32,16 @@ export class AdminOrganizacionController {
     }
   };
 
+  buscarRegistros = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { tipo, search } = req.query as { tipo: string; search?: string };
+      const data = await this.service.buscarRegistrosSoporte(req.params.id, tipo || 'PAGO', search);
+      sendSuccess(res, 'Registros recuperados con éxito.', data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   eliminarRegistro = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { tipo, registroId } = req.body;

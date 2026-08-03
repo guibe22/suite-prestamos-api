@@ -163,6 +163,152 @@ export class AdminOrganizacionService {
     });
   }
 
+  /** Lista registros (Pagos, Préstamos, Jornadas o Gastos) para el panel de soporte con búsqueda rápida. */
+  async buscarRegistrosSoporte(organizacionId: string, tipo: string, search?: string) {
+    const org = await prisma.organizacion.findUnique({ where: { id: organizacionId } });
+    if (!org) throw new NotFoundError('La organización no existe.');
+
+    const cleanSearch = search?.trim();
+    const tipoUpper = tipo.toUpperCase();
+
+    if (tipoUpper === 'PAGO') {
+      const pagos = await prisma.pago.findMany({
+        where: {
+          prestamo: { cliente: { organizacionId } },
+          ...(cleanSearch
+            ? {
+                OR: [
+                  { id: { contains: cleanSearch, mode: 'insensitive' } },
+                  { prestamo: { codigo: { contains: cleanSearch, mode: 'insensitive' } } },
+                  { prestamo: { cliente: { nombres: { contains: cleanSearch, mode: 'insensitive' } } } },
+                  { prestamo: { cliente: { apellidos: { contains: cleanSearch, mode: 'insensitive' } } } },
+                ],
+              }
+            : {}),
+        },
+        include: {
+          prestamo: {
+            include: {
+              cliente: { select: { nombres: true, apellidos: true, codigo: true } },
+            },
+          },
+        },
+        orderBy: { fechaPago: 'desc' },
+        take: 50,
+      });
+
+      return pagos.map((p) => ({
+        id: p.id,
+        fecha: p.fechaPago,
+        clienteNombre: `${p.prestamo.cliente.nombres} ${p.prestamo.cliente.apellidos || ''}`.trim(),
+        codigoPrestamo: p.prestamo.codigo || p.prestamoId,
+        monto: Number(p.monto),
+        metodoPago: p.metodoPago,
+        referencia: p.referencia,
+      }));
+    }
+
+    if (tipoUpper === 'PRESTAMO') {
+      const prestamos = await prisma.prestamo.findMany({
+        where: {
+          cliente: { organizacionId },
+          ...(cleanSearch
+            ? {
+                OR: [
+                  { id: { contains: cleanSearch, mode: 'insensitive' } },
+                  { codigo: { contains: cleanSearch, mode: 'insensitive' } },
+                  { cliente: { nombres: { contains: cleanSearch, mode: 'insensitive' } } },
+                  { cliente: { apellidos: { contains: cleanSearch, mode: 'insensitive' } } },
+                ],
+              }
+            : {}),
+        },
+        include: {
+          cliente: { select: { nombres: true, apellidos: true, codigo: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      });
+
+      return prestamos.map((p) => ({
+        id: p.id,
+        codigo: p.codigo || p.id,
+        clienteNombre: `${p.cliente.nombres} ${p.cliente.apellidos || ''}`.trim(),
+        monto: Number(p.monto),
+        tasaInteres: Number(p.tasaInteres),
+        plazo: p.plazo,
+        estado: p.estado,
+        fechaInicio: p.fechaInicio,
+      }));
+    }
+
+    if (tipoUpper === 'JORNADA') {
+      const jornadas = await prisma.jornadaCobranza.findMany({
+        where: {
+          organizacionId,
+          ...(cleanSearch
+            ? {
+                OR: [
+                  { id: { contains: cleanSearch, mode: 'insensitive' } },
+                  { ruta: { nombre: { contains: cleanSearch, mode: 'insensitive' } } },
+                  { usuario: { nombre: { contains: cleanSearch, mode: 'insensitive' } } },
+                ],
+              }
+            : {}),
+        },
+        include: {
+          ruta: { select: { nombre: true } },
+          usuario: { select: { nombre: true, email: true } },
+        },
+        orderBy: { fecha: 'desc' },
+        take: 50,
+      });
+
+      return jornadas.map((j) => ({
+        id: j.id,
+        fecha: j.fecha,
+        rutaNombre: j.ruta?.nombre || 'Sin Ruta',
+        cobradorNombre: j.usuario?.nombre || 'Desconocido',
+        saldoInicial: Number(j.saldoInicial),
+        efectivoCobrado: Number(j.efectivoCobrado),
+        gastos: Number(j.gastos),
+        estado: j.estado,
+      }));
+    }
+
+    if (tipoUpper === 'GASTO') {
+      const gastos = await prisma.gasto.findMany({
+        where: {
+          OR: [
+            { caja: { organizacionId } },
+            { jornada: { organizacionId } },
+          ],
+          ...(cleanSearch
+            ? {
+                OR: [
+                  { id: { contains: cleanSearch, mode: 'insensitive' } },
+                  { descripcion: { contains: cleanSearch, mode: 'insensitive' } },
+                  { categoria: { contains: cleanSearch, mode: 'insensitive' } },
+                ],
+              }
+            : {}),
+        },
+        orderBy: { fechaGasto: 'desc' },
+        take: 50,
+      });
+
+      return gastos.map((g) => ({
+        id: g.id,
+        fecha: g.fechaGasto,
+        categoria: g.categoria || 'Sin categoría',
+        descripcion: g.descripcion,
+        monto: Number(g.monto),
+      }));
+    }
+
+    return [];
+  }
+
   /** Elimina un registro de soporte (Pago, Préstamo, Jornada o Gasto) de la organización. */
   async eliminarRegistroSoporte(organizacionId: string, tipo: string, registroId: string) {
     const org = await prisma.organizacion.findUnique({ where: { id: organizacionId } });

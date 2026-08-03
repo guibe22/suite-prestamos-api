@@ -73,6 +73,7 @@ router.patch(
  */
 router.get('/:id/auditoria', validate({ params: idParamSchema }), controller.listarAuditoria);
 
+router.get('/:id/registros', validate({ params: idParamSchema }), controller.buscarRegistros);
 router.delete('/:id/registros', validate({ params: idParamSchema }), controller.eliminarRegistro);
 router.get('/:id/exportar', validate({ params: idParamSchema }), controller.exportarDatos);
 router.post('/:id/importar', validate({ params: idParamSchema }), controller.importarDatos);
