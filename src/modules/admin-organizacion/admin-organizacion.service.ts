@@ -312,9 +312,15 @@ export class AdminOrganizacionService {
       const data = jornadas.map((j) => ({
         id: j.id,
         fecha: j.fecha ? new Date(j.fecha).toISOString() : new Date().toISOString(),
+        // Timestamp real de creación (distinto de `fecha`, que es el día de
+        // trabajo): con dos jornadas del mismo día/ruta, esto es lo único que
+        // deja ver si son de horas distintas (reapertura legítima) o casi
+        // simultáneas (indicio de duplicado por doble clic/sync).
+        creadaEn: j.createdAt ? new Date(j.createdAt).toISOString() : null,
         rutaNombre: j.ruta?.nombre || 'Sin Ruta',
         cobradorNombre: j.usuario?.nombre || 'Desconocido',
         saldoInicial: Number(j.saldoInicial || 0),
+        saldoFinal: j.saldoFinal != null ? Number(j.saldoFinal) : null,
         efectivoCobrado: Number(j.efectivoCobrado || 0),
         gastos: Number(j.gastos || 0),
         estado: j.estado || 'ABIERTA',
