@@ -177,6 +177,7 @@ export class AdminOrganizacionService {
 
     if (tipoUpper === 'PAGO') {
       const where: Prisma.PagoWhereInput = {
+        deletedAt: null,
         prestamo: { cliente: { organizacionId } },
         ...(cleanSearch
           ? {
@@ -230,6 +231,7 @@ export class AdminOrganizacionService {
 
     if (tipoUpper === 'PRESTAMO') {
       const where: Prisma.PrestamoWhereInput = {
+        deletedAt: null,
         cliente: { organizacionId },
         ...(cleanSearch
           ? {
@@ -280,6 +282,7 @@ export class AdminOrganizacionService {
 
     if (tipoUpper === 'JORNADA') {
       const where: Prisma.JornadaCobranzaWhereInput = {
+        deletedAt: null,
         organizacionId,
         ...(cleanSearch
           ? {
@@ -329,20 +332,26 @@ export class AdminOrganizacionService {
     }
 
     if (tipoUpper === 'GASTO') {
+      // OJO: el scope de organización y el filtro de búsqueda usan ambos la
+      // clave "OR" — deben ir en un AND separado, nunca en el mismo objeto,
+      // porque un spread posterior con la misma clave "OR" sobrescribiría (no
+      // combinaría) el OR anterior y dejaría la búsqueda sin scope de organización.
       const where: Prisma.GastoWhereInput = {
-        OR: [
-          { caja: { organizacionId } },
-          { jornada: { organizacionId } },
+        deletedAt: null,
+        AND: [
+          { OR: [{ caja: { organizacionId } }, { jornada: { organizacionId } }] },
+          ...(cleanSearch
+            ? [
+                {
+                  OR: [
+                    { id: { contains: cleanSearch, mode: 'insensitive' as const } },
+                    { descripcion: { contains: cleanSearch, mode: 'insensitive' as const } },
+                    { categoria: { contains: cleanSearch, mode: 'insensitive' as const } },
+                  ],
+                },
+              ]
+            : []),
         ],
-        ...(cleanSearch
-          ? {
-              OR: [
-                { id: { contains: cleanSearch, mode: 'insensitive' } },
-                { descripcion: { contains: cleanSearch, mode: 'insensitive' } },
-                { categoria: { contains: cleanSearch, mode: 'insensitive' } },
-              ],
-            }
-          : {}),
       };
 
       const [totalItems, gastos] = await Promise.all([
@@ -380,16 +389,23 @@ export class AdminOrganizacionService {
     };
   }
 
-  /** Elimina un registro de soporte (Pago, Préstamo, Jornada o Gasto) de la organización. */
-  async eliminarRegistroSoporte(organizacionId: string, tipo: string, registroId: string) {
+  /**
+   * Elimina un registro de soporte (Pago, Préstamo, Jornada o Gasto) de la organización.
+   * Usa borrado lógico (deletedAt/deletedBy), igual que el borrado normal vía sync
+   * (sincronizacion.service.ts): un hard delete no genera tombstone, así que los
+   * clientes móviles que ya sincronizaron el registro nunca reciben la orden de
+   * borrarlo y este sigue apareciendo en pantallas como el Historial de Cuadres.
+   */
+  async eliminarRegistroSoporte(organizacionId: string, tipo: string, registroId: string, adminUserId: string) {
     const org = await prisma.organizacion.findUnique({ where: { id: organizacionId } });
     if (!org) throw new NotFoundError('La organización no existe.');
 
     const tipoUpper = tipo.toUpperCase();
+    const softDelete = { deletedAt: new Date(), deletedBy: adminUserId };
 
     if (tipoUpper === 'PAGO') {
       const pago = await prisma.pago.findFirst({
-        where: { id: registroId, prestamo: { cliente: { organizacionId } } },
+        where: { id: registroId, deletedAt: null, prestamo: { cliente: { organizacionId } } },
         include: { prestamo: true },
       });
       if (!pago) throw new NotFoundError('El pago no fue encontrado en esta organización.');
@@ -402,31 +418,31 @@ export class AdminOrganizacionService {
         });
       }
 
-      await prisma.pago.delete({ where: { id: registroId } });
+      await prisma.pago.update({ where: { id: registroId }, data: softDelete });
       return { mensaje: 'Pago eliminado con éxito.' };
     }
 
     if (tipoUpper === 'PRESTAMO') {
       const prestamo = await prisma.prestamo.findFirst({
-        where: { id: registroId, cliente: { organizacionId } },
+        where: { id: registroId, deletedAt: null, cliente: { organizacionId } },
       });
       if (!prestamo) throw new NotFoundError('El préstamo no fue encontrado en esta organización.');
 
       await prisma.$transaction([
-        prisma.cuota.deleteMany({ where: { prestamoId: registroId } }),
-        prisma.pago.deleteMany({ where: { prestamoId: registroId } }),
-        prisma.prestamo.delete({ where: { id: registroId } }),
+        prisma.cuota.updateMany({ where: { prestamoId: registroId }, data: softDelete }),
+        prisma.pago.updateMany({ where: { prestamoId: registroId }, data: softDelete }),
+        prisma.prestamo.update({ where: { id: registroId }, data: softDelete }),
       ]);
       return { mensaje: 'Préstamo y sus registros asociados eliminados con éxito.' };
     }
 
     if (tipoUpper === 'JORNADA') {
       const jornada = await prisma.jornadaCobranza.findFirst({
-        where: { id: registroId, organizacionId },
+        where: { id: registroId, deletedAt: null, organizacionId },
       });
       if (!jornada) throw new NotFoundError('La jornada no fue encontrada en esta organización.');
 
-      await prisma.jornadaCobranza.delete({ where: { id: registroId } });
+      await prisma.jornadaCobranza.update({ where: { id: registroId }, data: softDelete });
       return { mensaje: 'Jornada eliminada con éxito.' };
     }
 
@@ -434,6 +450,7 @@ export class AdminOrganizacionService {
       const gasto = await prisma.gasto.findFirst({
         where: {
           id: registroId,
+          deletedAt: null,
           OR: [
             { caja: { organizacionId } },
             { jornada: { organizacionId } },
@@ -442,7 +459,7 @@ export class AdminOrganizacionService {
       });
       if (!gasto) throw new NotFoundError('El gasto no fue encontrado en esta organización.');
 
-      await prisma.gasto.delete({ where: { id: registroId } });
+      await prisma.gasto.update({ where: { id: registroId }, data: softDelete });
       return { mensaje: 'Gasto eliminado con éxito.' };
     }
 

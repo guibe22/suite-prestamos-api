@@ -51,7 +51,7 @@ export class AdminOrganizacionController {
   eliminarRegistro = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { tipo, registroId } = req.body;
-      const resultado = await this.service.eliminarRegistroSoporte(req.params.id, tipo, registroId);
+      const resultado = await this.service.eliminarRegistroSoporte(req.params.id, tipo, registroId, req.user!.id);
       sendSuccess(res, resultado.mensaje, resultado);
     } catch (error) {
       next(error);
