@@ -163,150 +163,221 @@ export class AdminOrganizacionService {
     });
   }
 
-  /** Lista registros (Pagos, Préstamos, Jornadas o Gastos) para el panel de soporte con búsqueda rápida. */
-  async buscarRegistrosSoporte(organizacionId: string, tipo: string, search?: string) {
+  /** Lista registros (Pagos, Préstamos, Jornadas o Gastos) para el panel de soporte con búsqueda rápida y paginación. */
+  async buscarRegistrosSoporte(organizacionId: string, tipo: string, search?: string, pageNum: number = 1, limitNum: number = 10) {
     const org = await prisma.organizacion.findUnique({ where: { id: organizacionId } });
     if (!org) throw new NotFoundError('La organización no existe.');
+
+    const page = Number(pageNum) > 0 ? Number(pageNum) : 1;
+    const limit = Number(limitNum) > 0 ? Number(limitNum) : 10;
+    const { skip, take } = getPagination({ page, limit });
 
     const cleanSearch = search?.trim();
     const tipoUpper = tipo.toUpperCase();
 
     if (tipoUpper === 'PAGO') {
-      const pagos = await prisma.pago.findMany({
-        where: {
-          prestamo: { cliente: { organizacionId } },
-          ...(cleanSearch
-            ? {
-                OR: [
-                  { id: { contains: cleanSearch, mode: 'insensitive' } },
-                  { prestamo: { codigo: { contains: cleanSearch, mode: 'insensitive' } } },
-                  { prestamo: { cliente: { nombres: { contains: cleanSearch, mode: 'insensitive' } } } },
-                  { prestamo: { cliente: { apellidos: { contains: cleanSearch, mode: 'insensitive' } } } },
-                ],
-              }
-            : {}),
-        },
-        include: {
-          prestamo: {
-            include: {
-              cliente: { select: { nombres: true, apellidos: true, codigo: true } },
+      const where: Prisma.PagoWhereInput = {
+        prestamo: { cliente: { organizacionId } },
+        ...(cleanSearch
+          ? {
+              OR: [
+                { id: { contains: cleanSearch, mode: 'insensitive' } },
+                { prestamo: { codigo: { contains: cleanSearch, mode: 'insensitive' } } },
+                { prestamo: { cliente: { nombres: { contains: cleanSearch, mode: 'insensitive' } } } },
+                { prestamo: { cliente: { apellidos: { contains: cleanSearch, mode: 'insensitive' } } } },
+              ],
+            }
+          : {}),
+      };
+
+      const [totalItems, pagos] = await Promise.all([
+        prisma.pago.count({ where }),
+        prisma.pago.findMany({
+          where,
+          include: {
+            prestamo: {
+              include: {
+                cliente: { select: { nombres: true, apellidos: true, codigo: true } },
+              },
             },
           },
-        },
-        orderBy: { fechaPago: 'desc' },
-        take: 50,
-      });
+          orderBy: { fechaPago: 'desc' },
+          skip,
+          take,
+        }),
+      ]);
 
-      return pagos.map((p) => ({
+      const data = pagos.map((p) => ({
         id: p.id,
-        fecha: p.fechaPago,
-        clienteNombre: `${p.prestamo.cliente.nombres} ${p.prestamo.cliente.apellidos || ''}`.trim(),
-        codigoPrestamo: p.prestamo.codigo || p.prestamoId,
-        monto: Number(p.monto),
-        metodoPago: p.metodoPago,
-        referencia: p.referencia,
+        fecha: p.fechaPago ? new Date(p.fechaPago).toISOString() : new Date().toISOString(),
+        clienteNombre: p.prestamo?.cliente ? `${p.prestamo.cliente.nombres} ${p.prestamo.cliente.apellidos || ''}`.trim() : 'Desconocido',
+        codigoPrestamo: p.prestamo?.codigo || p.prestamoId,
+        monto: Number(p.monto || 0),
+        metodoPago: p.metodoPago || 'EFECTIVO',
+        referencia: p.referencia || '—',
       }));
+
+      return {
+        data,
+        meta: {
+          page,
+          limit,
+          totalItems,
+          totalPages: Math.ceil(totalItems / limit) || 1,
+        },
+      };
     }
 
     if (tipoUpper === 'PRESTAMO') {
-      const prestamos = await prisma.prestamo.findMany({
-        where: {
-          cliente: { organizacionId },
-          ...(cleanSearch
-            ? {
-                OR: [
-                  { id: { contains: cleanSearch, mode: 'insensitive' } },
-                  { codigo: { contains: cleanSearch, mode: 'insensitive' } },
-                  { cliente: { nombres: { contains: cleanSearch, mode: 'insensitive' } } },
-                  { cliente: { apellidos: { contains: cleanSearch, mode: 'insensitive' } } },
-                ],
-              }
-            : {}),
-        },
-        include: {
-          cliente: { select: { nombres: true, apellidos: true, codigo: true } },
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 50,
-      });
+      const where: Prisma.PrestamoWhereInput = {
+        cliente: { organizacionId },
+        ...(cleanSearch
+          ? {
+              OR: [
+                { id: { contains: cleanSearch, mode: 'insensitive' } },
+                { codigo: { contains: cleanSearch, mode: 'insensitive' } },
+                { cliente: { nombres: { contains: cleanSearch, mode: 'insensitive' } } },
+                { cliente: { apellidos: { contains: cleanSearch, mode: 'insensitive' } } },
+              ],
+            }
+          : {}),
+      };
 
-      return prestamos.map((p) => ({
+      const [totalItems, prestamos] = await Promise.all([
+        prisma.prestamo.count({ where }),
+        prisma.prestamo.findMany({
+          where,
+          include: {
+            cliente: { select: { nombres: true, apellidos: true, codigo: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+          skip,
+          take,
+        }),
+      ]);
+
+      const data = prestamos.map((p) => ({
         id: p.id,
         codigo: p.codigo || p.id,
-        clienteNombre: `${p.cliente.nombres} ${p.cliente.apellidos || ''}`.trim(),
-        monto: Number(p.monto),
-        tasaInteres: Number(p.tasaInteres),
-        plazo: p.plazo,
-        estado: p.estado,
-        fechaInicio: p.fechaInicio,
+        clienteNombre: p.cliente ? `${p.cliente.nombres} ${p.cliente.apellidos || ''}`.trim() : 'Desconocido',
+        monto: Number(p.monto || 0),
+        tasaInteres: Number(p.tasaInteres || 0),
+        plazo: p.plazo || 1,
+        estado: p.estado || 'ACTIVO',
+        fechaInicio: p.fechaInicio ? new Date(p.fechaInicio).toISOString() : new Date().toISOString(),
       }));
+
+      return {
+        data,
+        meta: {
+          page,
+          limit,
+          totalItems,
+          totalPages: Math.ceil(totalItems / limit) || 1,
+        },
+      };
     }
 
     if (tipoUpper === 'JORNADA') {
-      const jornadas = await prisma.jornadaCobranza.findMany({
-        where: {
-          organizacionId,
-          ...(cleanSearch
-            ? {
-                OR: [
-                  { id: { contains: cleanSearch, mode: 'insensitive' } },
-                  { ruta: { nombre: { contains: cleanSearch, mode: 'insensitive' } } },
-                  { usuario: { nombre: { contains: cleanSearch, mode: 'insensitive' } } },
-                ],
-              }
-            : {}),
-        },
-        include: {
-          ruta: { select: { nombre: true } },
-          usuario: { select: { nombre: true, email: true } },
-        },
-        orderBy: { fecha: 'desc' },
-        take: 50,
-      });
+      const where: Prisma.JornadaCobranzaWhereInput = {
+        organizacionId,
+        ...(cleanSearch
+          ? {
+              OR: [
+                { id: { contains: cleanSearch, mode: 'insensitive' } },
+                { ruta: { nombre: { contains: cleanSearch, mode: 'insensitive' } } },
+                { usuario: { nombre: { contains: cleanSearch, mode: 'insensitive' } } },
+              ],
+            }
+          : {}),
+      };
 
-      return jornadas.map((j) => ({
+      const [totalItems, jornadas] = await Promise.all([
+        prisma.jornadaCobranza.count({ where }),
+        prisma.jornadaCobranza.findMany({
+          where,
+          include: {
+            ruta: { select: { nombre: true } },
+            usuario: { select: { nombre: true, email: true } },
+          },
+          orderBy: { fecha: 'desc' },
+          skip,
+          take,
+        }),
+      ]);
+
+      const data = jornadas.map((j) => ({
         id: j.id,
-        fecha: j.fecha,
+        fecha: j.fecha ? new Date(j.fecha).toISOString() : new Date().toISOString(),
         rutaNombre: j.ruta?.nombre || 'Sin Ruta',
         cobradorNombre: j.usuario?.nombre || 'Desconocido',
-        saldoInicial: Number(j.saldoInicial),
-        efectivoCobrado: Number(j.efectivoCobrado),
-        gastos: Number(j.gastos),
-        estado: j.estado,
+        saldoInicial: Number(j.saldoInicial || 0),
+        efectivoCobrado: Number(j.efectivoCobrado || 0),
+        gastos: Number(j.gastos || 0),
+        estado: j.estado || 'ABIERTA',
       }));
+
+      return {
+        data,
+        meta: {
+          page,
+          limit,
+          totalItems,
+          totalPages: Math.ceil(totalItems / limit) || 1,
+        },
+      };
     }
 
     if (tipoUpper === 'GASTO') {
-      const gastos = await prisma.gasto.findMany({
-        where: {
-          OR: [
-            { caja: { organizacionId } },
-            { jornada: { organizacionId } },
-          ],
-          ...(cleanSearch
-            ? {
-                OR: [
-                  { id: { contains: cleanSearch, mode: 'insensitive' } },
-                  { descripcion: { contains: cleanSearch, mode: 'insensitive' } },
-                  { categoria: { contains: cleanSearch, mode: 'insensitive' } },
-                ],
-              }
-            : {}),
-        },
-        orderBy: { fechaGasto: 'desc' },
-        take: 50,
-      });
+      const where: Prisma.GastoWhereInput = {
+        OR: [
+          { caja: { organizacionId } },
+          { jornada: { organizacionId } },
+        ],
+        ...(cleanSearch
+          ? {
+              OR: [
+                { id: { contains: cleanSearch, mode: 'insensitive' } },
+                { descripcion: { contains: cleanSearch, mode: 'insensitive' } },
+                { categoria: { contains: cleanSearch, mode: 'insensitive' } },
+              ],
+            }
+          : {}),
+      };
 
-      return gastos.map((g) => ({
+      const [totalItems, gastos] = await Promise.all([
+        prisma.gasto.count({ where }),
+        prisma.gasto.findMany({
+          where,
+          orderBy: { fechaGasto: 'desc' },
+          skip,
+          take,
+        }),
+      ]);
+
+      const data = gastos.map((g) => ({
         id: g.id,
-        fecha: g.fechaGasto,
+        fecha: g.fechaGasto ? new Date(g.fechaGasto).toISOString() : new Date().toISOString(),
         categoria: g.categoria || 'Sin categoría',
-        descripcion: g.descripcion,
-        monto: Number(g.monto),
+        descripcion: g.descripcion || 'Gasto registrado',
+        monto: Number(g.monto || 0),
       }));
+
+      return {
+        data,
+        meta: {
+          page,
+          limit,
+          totalItems,
+          totalPages: Math.ceil(totalItems / limit) || 1,
+        },
+      };
     }
 
-    return [];
+    return {
+      data: [],
+      meta: { page, limit, totalItems: 0, totalPages: 1 },
+    };
   }
 
   /** Elimina un registro de soporte (Pago, Préstamo, Jornada o Gasto) de la organización. */

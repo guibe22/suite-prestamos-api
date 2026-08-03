@@ -34,9 +34,15 @@ export class AdminOrganizacionController {
 
   buscarRegistros = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const { tipo, search } = req.query as { tipo: string; search?: string };
-      const data = await this.service.buscarRegistrosSoporte(req.params.id, tipo || 'PAGO', search);
-      sendSuccess(res, 'Registros recuperados con éxito.', data);
+      const { tipo, search, page, limit } = req.query as { tipo: string; search?: string; page?: string; limit?: string };
+      const { data, meta } = await this.service.buscarRegistrosSoporte(
+        req.params.id,
+        tipo || 'PAGO',
+        search,
+        page ? Number(page) : 1,
+        limit ? Number(limit) : 10
+      );
+      sendSuccess(res, 'Registros recuperados con éxito.', data, meta);
     } catch (error) {
       next(error);
     }
