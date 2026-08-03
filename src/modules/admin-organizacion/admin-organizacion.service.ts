@@ -502,6 +502,18 @@ export class AdminOrganizacionService {
     };
   }
 
+  /** Lista las rutas activas de la organización (para el selector del importador). */
+  async listarRutas(organizacionId: string) {
+    const org = await prisma.organizacion.findUnique({ where: { id: organizacionId } });
+    if (!org) throw new NotFoundError('La organización no existe.');
+
+    return prisma.ruta.findMany({
+      where: { organizacionId, deletedAt: null },
+      select: { id: true, nombre: true, codigo: true },
+      orderBy: { nombre: 'asc' },
+    });
+  }
+
   /** Importa clientes y préstamos desde un JSON formateado a la organización. */
   async importarClientesYPrestamos(organizacionId: string, payload: any) {
     const org = await prisma.organizacion.findUnique({ where: { id: organizacionId } });
@@ -511,13 +523,33 @@ export class AdminOrganizacionService {
       throw new Error('Formato de datos inválido: se requiere un objeto con el arreglo "clientes".');
     }
 
-    // Buscar una ruta válida o crear "Ruta Principal" por defecto
-    let ruta = await prisma.ruta.findFirst({
-      where: { organizacionId, deletedAt: null },
-    });
+    // Ruta por defecto elegida en el modal: por id (ruta existente) o por nombre (ruta nueva a crear)
+    let rutaDefault = payload.rutaId
+      ? await prisma.ruta.findFirst({ where: { id: payload.rutaId, organizacionId, deletedAt: null } })
+      : null;
 
-    if (!ruta) {
-      ruta = await prisma.ruta.create({
+    if (!rutaDefault && payload.rutaNombre) {
+      const nombreDefault = String(payload.rutaNombre).trim();
+      if (nombreDefault) {
+        rutaDefault = await prisma.ruta.findFirst({
+          where: {
+            organizacionId,
+            deletedAt: null,
+            OR: [{ nombre: { equals: nombreDefault, mode: 'insensitive' } }, { codigo: { equals: nombreDefault, mode: 'insensitive' } }],
+          },
+        });
+        if (!rutaDefault) {
+          rutaDefault = await prisma.ruta.create({ data: { organizacionId, nombre: nombreDefault, diaSemana: 'LUNES' } });
+        }
+      }
+    }
+
+    if (!rutaDefault) {
+      rutaDefault = await prisma.ruta.findFirst({ where: { organizacionId, deletedAt: null } });
+    }
+
+    if (!rutaDefault) {
+      rutaDefault = await prisma.ruta.create({
         data: {
           organizacionId,
           nombre: 'Ruta Principal',
@@ -527,6 +559,38 @@ export class AdminOrganizacionService {
       });
     }
 
+    // Cache de rutas por nombre/código (en minúsculas) para resolver el campo opcional "ruta" de cada cliente sin repetir consultas
+    const rutasPorNombre = new Map<string, { id: string }>();
+    let rutasCreadas = 0;
+
+    const resolverRutaId = async (nombreRuta?: string): Promise<string> => {
+      const clave = nombreRuta?.trim().toLowerCase();
+      if (!clave) return rutaDefault!.id;
+
+      const cacheada = rutasPorNombre.get(clave);
+      if (cacheada) return cacheada.id;
+
+      let ruta = await prisma.ruta.findFirst({
+        where: {
+          organizacionId,
+          deletedAt: null,
+          OR: [{ nombre: { equals: clave, mode: 'insensitive' } }, { codigo: { equals: clave, mode: 'insensitive' } }],
+        },
+        select: { id: true },
+      });
+
+      if (!ruta) {
+        ruta = await prisma.ruta.create({
+          data: { organizacionId, nombre: nombreRuta!.trim(), diaSemana: 'LUNES' },
+          select: { id: true },
+        });
+        rutasCreadas++;
+      }
+
+      rutasPorNombre.set(clave, ruta);
+      return ruta.id;
+    };
+
     let clientesCreados = 0;
     let prestamosCreados = 0;
 
@@ -534,11 +598,12 @@ export class AdminOrganizacionService {
       if (!cData.nombres) continue;
 
       const codigoCliente = cData.codigo || `C-${Math.floor(100000 + Math.random() * 900000)}`;
+      const rutaId = await resolverRutaId(cData.ruta);
 
       const cliente = await prisma.cliente.create({
         data: {
           organizacionId,
-          rutaId: ruta.id,
+          rutaId,
           codigo: codigoCliente,
           nombres: cData.nombres,
           apellidos: cData.apellidos || null,
@@ -619,6 +684,6 @@ export class AdminOrganizacionService {
       }
     }
 
-    return { clientesCreados, prestamosCreados };
+    return { clientesCreados, prestamosCreados, rutasCreadas };
   }
 }

@@ -75,4 +75,13 @@ export class AdminOrganizacionController {
       next(error);
     }
   };
+
+  listarRutas = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const rutas = await this.service.listarRutas(req.params.id);
+      sendSuccess(res, 'Rutas recuperadas con éxito.', rutas);
+    } catch (error) {
+      next(error);
+    }
+  };
 }

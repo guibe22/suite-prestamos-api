@@ -77,5 +77,6 @@ router.get('/:id/registros', validate({ params: idParamSchema }), controller.bus
 router.delete('/:id/registros', validate({ params: idParamSchema }), controller.eliminarRegistro);
 router.get('/:id/exportar', validate({ params: idParamSchema }), controller.exportarDatos);
 router.post('/:id/importar', validate({ params: idParamSchema }), controller.importarDatos);
+router.get('/:id/rutas', validate({ params: idParamSchema }), controller.listarRutas);
 
 export default router;
