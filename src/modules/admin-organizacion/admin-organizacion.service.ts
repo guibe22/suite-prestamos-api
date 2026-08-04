@@ -396,6 +396,165 @@ export class AdminOrganizacionService {
   }
 
   /**
+   * Detalle completo de una jornada de cobranza para el drawer de soporte:
+   * cuadre de caja, ingresos (pagos), egresos (gastos) y desembolsos atribuidos.
+   *
+   * Replica el cálculo que la app móvil hace en JornadaDetalleModal.tsx para que
+   * ambas pantallas cuadren con los mismos números.
+   */
+  async obtenerDetalleJornada(organizacionId: string, jornadaId: string) {
+    const jornada = await prisma.jornadaCobranza.findFirst({
+      where: { id: jornadaId, organizacionId, deletedAt: null },
+      include: {
+        ruta: { select: { id: true, nombre: true, codigo: true } },
+        usuario: { select: { id: true, nombre: true, email: true, rol: { select: { nombre: true } } } },
+      },
+    });
+    if (!jornada) throw new NotFoundError('La jornada no fue encontrada en esta organización.');
+
+    // Los desembolsos no guardan jornadaId (a diferencia de Pago y Gasto), así
+    // que se atribuyen por ventana de tiempo + ruta, igual que la app móvil.
+    // Para una jornada CERRADA, `updatedAt` es el cierre (la app usa closedAt);
+    // mientras sigue ABIERTA se toma el día completo desde su creación.
+    const inicioVentana = jornada.createdAt;
+    const finVentana =
+      jornada.estado === 'CERRADA' && jornada.updatedAt > jornada.createdAt
+        ? jornada.updatedAt
+        : new Date(jornada.createdAt.getTime() + 24 * 60 * 60 * 1000);
+
+    const [pagos, gastos, prestamosOtorgados] = await Promise.all([
+      prisma.pago.findMany({
+        where: { jornadaId, deletedAt: null },
+        include: {
+          prestamo: {
+            select: {
+              codigo: true,
+              plazo: true,
+              cliente: { select: { nombres: true, apellidos: true, codigo: true } },
+            },
+          },
+        },
+        orderBy: { fechaPago: 'desc' },
+      }),
+      prisma.gasto.findMany({
+        where: { jornadaId, deletedAt: null },
+        orderBy: { fechaGasto: 'desc' },
+      }),
+      prisma.prestamo.findMany({
+        where: {
+          deletedAt: null,
+          createdAt: { gte: inicioVentana, lte: finVentana },
+          cliente: { organizacionId, rutaId: jornada.rutaId },
+          // NULL = préstamos anteriores a este campo, se tratan como incluidos.
+          // Se lista explícitamente en vez de `NOT: { incluirEnJornada: false }`
+          // porque en SQL una comparación contra NULL no es TRUE y descartaría
+          // justo esas filas antiguas.
+          OR: [{ incluirEnJornada: null }, { incluirEnJornada: true }],
+        },
+        include: { cliente: { select: { nombres: true, apellidos: true } } },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    const nombreCliente = (c: { nombres: string; apellidos: string | null } | null | undefined) =>
+      c ? `${c.nombres} ${c.apellidos || ''}`.trim() : 'Desconocido';
+
+    const pagosDetalle = pagos.map((p) => ({
+      id: p.id,
+      fechaPago: new Date(p.fechaPago).toISOString(),
+      clienteNombre: nombreCliente(p.prestamo?.cliente),
+      codigoPrestamo: p.prestamo?.codigo || p.prestamoId,
+      monto: Number(p.monto || 0),
+      moraCobrada: Number(p.moraCobrada || 0),
+      metodoPago: p.metodoPago || 'EFECTIVO',
+      referencia: p.referencia || null,
+      cuotaNumero: p.cuotaNumero ?? null,
+      totalCuotas: p.prestamo?.plazo ?? null,
+      esParcial: !!p.esParcial,
+    }));
+
+    const gastosDetalle = gastos.map((g) => ({
+      id: g.id,
+      fechaGasto: new Date(g.fechaGasto).toISOString(),
+      categoria: g.categoria || 'Sin categoría',
+      descripcion: g.descripcion || 'Gasto registrado',
+      monto: Number(g.monto || 0),
+    }));
+
+    const prestamosDetalle = prestamosOtorgados.map((p) => ({
+      id: p.id,
+      createdAt: new Date(p.createdAt).toISOString(),
+      codigo: p.codigo || p.id,
+      clienteNombre: nombreCliente(p.cliente),
+      monto: Number(p.monto || 0),
+      tasaInteres: Number(p.tasaInteres || 0),
+      plazo: p.plazo || 1,
+    }));
+
+    const saldoInicial = Number(jornada.saldoInicial || 0);
+    const saldoFinal = jornada.saldoFinal != null ? Number(jornada.saldoFinal) : null;
+    const efectivoCobrado = Number(jornada.efectivoCobrado || 0);
+    const gastosCampo = Number(jornada.gastos || 0);
+
+    // El total de desembolsos del cuadre sale del campo acumulado de la jornada
+    // (fuente de verdad del cierre); la lista derivada solo lo respalda cuando
+    // el campo viene en 0 — mismo criterio que la app móvil.
+    const totalPrestamosListados = prestamosDetalle.reduce((s, p) => s + p.monto, 0);
+    const prestamosCampo = Number(jornada.prestamos || 0);
+    const totalPrestamos = prestamosCampo > 0 ? prestamosCampo : totalPrestamosListados;
+
+    const totalPagos = pagosDetalle.reduce((s, p) => s + p.monto, 0);
+    const totalPagosEfectivo = pagosDetalle
+      .filter((p) => p.metodoPago === 'EFECTIVO')
+      .reduce((s, p) => s + p.monto, 0);
+    const totalMora = pagosDetalle.reduce((s, p) => s + p.moraCobrada, 0);
+    const totalGastosDetalle = gastosDetalle.reduce((s, g) => s + g.monto, 0);
+
+    const cajaEsperada = saldoInicial + efectivoCobrado - gastosCampo - totalPrestamos;
+
+    return {
+      id: jornada.id,
+      fecha: new Date(jornada.fecha).toISOString(),
+      creadaEn: new Date(jornada.createdAt).toISOString(),
+      actualizadaEn: new Date(jornada.updatedAt).toISOString(),
+      estado: jornada.estado,
+      ruta: { id: jornada.ruta?.id || jornada.rutaId, nombre: jornada.ruta?.nombre || 'Sin Ruta', codigo: jornada.ruta?.codigo || null },
+      cobrador: {
+        id: jornada.usuario?.id || jornada.usuarioId,
+        nombre: jornada.usuario?.nombre || 'Desconocido',
+        email: jornada.usuario?.email || null,
+        rol: jornada.usuario?.rol?.nombre || null,
+      },
+      cuadre: {
+        saldoInicial,
+        efectivoCobrado,
+        gastos: gastosCampo,
+        prestamos: totalPrestamos,
+        cajaEsperada,
+        saldoFinal,
+        diferencia: saldoFinal != null ? saldoFinal - cajaEsperada : null,
+      },
+      progreso: {
+        clientesVisitados: jornada.clientesVisitados || 0,
+        clientesPendientes: jornada.clientesPendientes || 0,
+      },
+      // Sumas reales de los detalles: si no coinciden con los campos acumulados
+      // de la jornada, el drawer lo marca (indicio de borrado manual de un pago
+      // o gasto sin recalcular el cuadre).
+      totales: {
+        pagos: totalPagos,
+        pagosEfectivo: totalPagosEfectivo,
+        mora: totalMora,
+        gastos: totalGastosDetalle,
+        prestamosListados: totalPrestamosListados,
+      },
+      pagos: pagosDetalle,
+      gastos: gastosDetalle,
+      prestamos: prestamosDetalle,
+    };
+  }
+
+  /**
    * Elimina un registro de soporte (Pago, Préstamo, Jornada o Gasto) de la organización.
    * Usa borrado lógico (deletedAt/deletedBy), igual que el borrado normal vía sync
    * (sincronizacion.service.ts): un hard delete no genera tombstone, así que los

@@ -6,6 +6,7 @@ import { validate } from '../../middlewares/validate.middleware.js';
 import {
   actualizarSuscripcionOrgSchema,
   idParamSchema,
+  jornadaParamsSchema,
   listarOrganizacionesQuerySchema,
 } from './admin-organizacion.schema.js';
 
@@ -74,6 +75,37 @@ router.patch(
 router.get('/:id/auditoria', validate({ params: idParamSchema }), controller.listarAuditoria);
 
 router.get('/:id/registros', validate({ params: idParamSchema }), controller.buscarRegistros);
+
+/**
+ * @swagger
+ * /admin/organizaciones/{id}/jornadas/{jornadaId}:
+ *   get:
+ *     summary: Detalle de cuadre de una jornada (pagos, gastos y desembolsos) — solo SUPER_ADMIN
+ *     tags: [AdminOrganizacion]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: jornadaId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Detalle completo de la jornada
+ *       404:
+ *         description: La jornada no existe en esta organización
+ */
+router.get(
+  '/:id/jornadas/:jornadaId',
+  validate({ params: jornadaParamsSchema }),
+  controller.obtenerDetalleJornada
+);
 router.delete('/:id/registros', validate({ params: idParamSchema }), controller.eliminarRegistro);
 router.get('/:id/exportar', validate({ params: idParamSchema }), controller.exportarDatos);
 router.post('/:id/importar', validate({ params: idParamSchema }), controller.importarDatos);

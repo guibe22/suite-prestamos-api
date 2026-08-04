@@ -23,3 +23,11 @@ export const actualizarSuscripcionOrgSchema = z.object({
 export const idParamSchema = z.object({
   id: z.string().uuid('El id no es válido.'),
 });
+
+// El id de la jornada NO se valida como uuid: las jornadas nacen en la app
+// offline-first y WatermelonDB genera ids cortos propios (ej. "au9eiEZY..."),
+// no uuid v4.
+export const jornadaParamsSchema = z.object({
+  id: z.string().uuid('El id de la organización no es válido.'),
+  jornadaId: z.string().min(1, 'El id de la jornada es obligatorio.'),
+});

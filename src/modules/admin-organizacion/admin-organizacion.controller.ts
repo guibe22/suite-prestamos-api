@@ -48,6 +48,15 @@ export class AdminOrganizacionController {
     }
   };
 
+  obtenerDetalleJornada = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const detalle = await this.service.obtenerDetalleJornada(req.params.id, req.params.jornadaId);
+      sendSuccess(res, 'Detalle de la jornada recuperado con éxito.', detalle);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   eliminarRegistro = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { tipo, registroId } = req.body;
