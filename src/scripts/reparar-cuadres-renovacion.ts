@@ -23,9 +23,18 @@
  * comparación es acumulativa, pago por pago.
  *
  * Uso:
- *   npx tsx src/scripts/reparar-cuadres-renovacion.ts            → previsualiza, no cambia nada
- *   npx tsx src/scripts/reparar-cuadres-renovacion.ts --apply    → aplica los reenganches y recálculos
- *   ... --org <organizacionId>                                   → limita el alcance a una organización
+ *   npm run reparar-cuadres-renovacion              → previsualiza, no cambia nada
+ *   npm run reparar-cuadres-renovacion:apply        → aplica los reenganches y recálculos
+ *
+ * O invocando el script directamente (necesario para --org):
+ *   npx tsx src/scripts/reparar-cuadres-renovacion.ts --apply
+ *   npx tsx src/scripts/reparar-cuadres-renovacion.ts --apply --org <organizacionId>
+ *
+ * OJO con npm: `npm run <script> --apply` NO pasa el flag al script — npm lo
+ * abrevia a su propia opción `--all` y lo consume, dejando argv vacío. Hay que
+ * escribir `npm run <script> -- --apply` (con el separador) o usar el script
+ * `:apply`. El arranque detecta ese error y aborta en vez de previsualizar en
+ * silencio cuando se pidió aplicar.
  */
 import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
@@ -78,11 +87,43 @@ interface Reenganche {
   jornadaId: string;
 }
 
+/**
+ * `npm run <script> --apply` no le pasa nada al script: npm abrevia `--apply` a
+ * su propia opción `--all` y la consume, así que argv llega vacío y el script
+ * previsualizaba en silencio aunque el usuario hubiera pedido aplicar. Se
+ * detecta ese caso concreto (lanzado por npm, sin argumentos, con npm_config_all
+ * puesto) para abortar con una explicación en vez de no hacer nada.
+ *
+ * No se interpreta como un `--apply` implícito a propósito: escribir en la base
+ * de datos por una heurística de flags sería justo lo contrario de lo que espera
+ * un script con modo seguro por defecto.
+ */
+function detectarFlagComidoPorNpm(args: string[]): boolean {
+  return (
+    args.length === 0 &&
+    !!process.env.npm_lifecycle_event &&
+    process.env.npm_config_all === 'true'
+  );
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const aplicar = args.includes('--apply');
   const orgIndex = args.indexOf('--org');
   const organizacionId = orgIndex >= 0 ? args[orgIndex + 1] : undefined;
+
+  if (!aplicar && detectarFlagComidoPorNpm(args)) {
+    const script = process.env.npm_lifecycle_event;
+    console.error('🛑 El script no recibió ningún argumento: npm se comió el flag.');
+    console.error('   `npm run <script> --apply` no funciona — npm lo interpreta como su opción `--all`.');
+    console.error('\n   Usa una de estas formas:');
+    console.error(`     npm run ${script}:apply`);
+    console.error(`     npm run ${script} -- --apply`);
+    console.error('     npx tsx src/scripts/reparar-cuadres-renovacion.ts --apply');
+    console.error('\n   No se consultó ni modificó nada.');
+    process.exitCode = 1;
+    return;
+  }
 
   console.log(`🔎 Conectado a: ${new URL(connectionString!).host}`);
   if (organizacionId) console.log(`   Alcance limitado a la organización ${organizacionId}`);
