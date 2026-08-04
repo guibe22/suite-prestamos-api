@@ -504,7 +504,14 @@ export class SincronizacionService {
         model: prisma.prestamo,
         whereClause: (date: Date | null) => ({
           cliente: { organizacionId, ...(restringido ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
-          ...(date ? { updatedAt: { gt: date } } : {}),
+          // OR: activos modificados recientemente  O  recién borrados.
+          // Sin el split, un borrado lógico antiguo (deletedAt de hace semanas)
+          // podría colarse en `deleted[]` del PULL si lastPulledAt fuera 0
+          // (dispositivo nuevo) o si el recalculo de cuotas tocara updatedAt
+          // en batch y devolviera registros que el cliente ya no debería recibir.
+          ...(date
+            ? { OR: [{ deletedAt: null, updatedAt: { gt: date } }, { deletedAt: { gt: date } }] }
+            : {}),
         }),
       },
       {
@@ -514,7 +521,9 @@ export class SincronizacionService {
           prestamo: {
             cliente: { organizacionId, ...(restringido ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
           },
-          ...(date ? { updatedAt: { gt: date } } : {}),
+          ...(date
+            ? { OR: [{ deletedAt: null, updatedAt: { gt: date } }, { deletedAt: { gt: date } }] }
+            : {}),
         }),
       },
       {
@@ -524,7 +533,14 @@ export class SincronizacionService {
           prestamo: {
             cliente: { organizacionId, ...(restringido ? { ruta: this.rutaAccessFilter(actorId) } : {}) },
           },
-          ...(date ? { updatedAt: { gt: date } } : {}),
+          // OR: activos modificados recientemente  O  recién borrados.
+          // Sin este split, pagos borrados ANTES de lastPulledAt podían volver
+          // en el array `deleted[]` del PULL y WatermelonDB los eliminaba
+          // localmente aunque el usuario nunca los hubiera visto borrados —
+          // dando la impresión de que "se borraron todos los cobros".
+          ...(date
+            ? { OR: [{ deletedAt: null, updatedAt: { gt: date } }, { deletedAt: { gt: date } }] }
+            : {}),
         }),
       },
       {
@@ -541,7 +557,9 @@ export class SincronizacionService {
         model: prisma.gasto,
         whereClause: (date: Date | null) => ({
           caja: { organizacionId, ...(restringido ? { estado: 'ABIERTA', usuarioId: actorId } : {}) },
-          ...(date ? { updatedAt: { gt: date } } : {}),
+          ...(date
+            ? { OR: [{ deletedAt: null, updatedAt: { gt: date } }, { deletedAt: { gt: date } }] }
+            : {}),
         }),
       },
       {
