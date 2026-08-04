@@ -6,6 +6,7 @@ import { prisma } from './config/database.js';
 import { Sentry } from './config/sentry.js';
 import { startScoreRecalcWorker } from './workers/score-recalc.worker.js';
 import { startSuscripcionVencimientoWorker } from './workers/suscripcion-vencimiento.worker.js';
+import { startMoraRecalcWorker } from './workers/mora-recalc.worker.js';
 
 /** Devuelve las IPv4 de red (LAN) de esta PC, las que debe usar el dispositivo/emulador. */
 const getLanAddresses = (): string[] => {
@@ -29,6 +30,7 @@ const startServer = async () => {
 
     startScoreRecalcWorker();
     startSuscripcionVencimientoWorker();
+    startMoraRecalcWorker();
 
     const server = app.listen(env.PORT, () => {
       logger.info(`🚀 Servidor ejecutándose en http://localhost:${env.PORT}`);

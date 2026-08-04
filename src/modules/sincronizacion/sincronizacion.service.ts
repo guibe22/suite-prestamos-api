@@ -70,6 +70,12 @@ export class SincronizacionService {
       'fechaGasto',
       'fechaNacimiento',
       'fecha',
+      // El pull manda moraFechaCalculo como timestamp en ms; WatermelonDB
+      // reenvía el registro COMPLETO al actualizar un préstamo (p. ej. al
+      // descontar la mora cobrada), así que sin esta conversión Prisma
+      // recibiría un number en una columna DateTime y reventaría el push
+      // entero de la tabla prestamos.
+      'moraFechaCalculo',
     ];
 
     for (const field of dateFields) {
@@ -134,6 +140,11 @@ export class SincronizacionService {
       // — mismo caso que jornadas_cobranza arriba.
       data.moraCobrada = data.moraCobrada ?? 0;
       data.esParcial = data.esParcial ?? false;
+    }
+    if (tableName === 'prestamos') {
+      // moraAcumulada es NOT NULL con default 0 en Prisma pero opcional en
+      // WatermelonDB — coalescemos para que filas antiguas no rompan el push.
+      data.moraAcumulada = data.moraAcumulada ?? 0;
     }
     return data;
   }
