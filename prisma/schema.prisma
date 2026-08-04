@@ -509,6 +509,12 @@ model Prestamo {
   // opcional — solo si la empresa decide hacerla firmar también el contrato.
   referenciaFirmaBase64    String? @db.Text
 
+  // Gastos administrativos/de cierre retenidos del desembolso: el cliente
+  // recibe `monto - gastosCierre` en efectivo pero debe el `monto` completo, así
+  // que el cuadre de la jornada resta este egreso ya neteado. NULL = préstamos
+  // anteriores al campo (sin retención) — ver migración v26 de WatermelonDB.
+  gastosCierre     Decimal?  @db.Decimal(12, 2)
+
   // Mora pendiente acumulada de este préstamo. El worker mora-recalc.worker.ts
   // la recalcula diariamente; el Admin puede modificarla manualmente; al cobrar,
   // se descuenta lo que se cobró. Fuente de verdad única — reemplaza la lógica

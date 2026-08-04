@@ -481,15 +481,24 @@ export class AdminOrganizacionService {
       monto: Number(g.monto || 0),
     }));
 
-    const prestamosDetalle = prestamosOtorgados.map((p) => ({
-      id: p.id,
-      createdAt: new Date(p.createdAt).toISOString(),
-      codigo: p.codigo || p.id,
-      clienteNombre: nombreCliente(p.cliente),
-      monto: Number(p.monto || 0),
-      tasaInteres: Number(p.tasaInteres || 0),
-      plazo: p.plazo || 1,
-    }));
+    const prestamosDetalle = prestamosOtorgados.map((p) => {
+      const monto = Number(p.monto || 0);
+      // Retención administrativa del desembolso: el cliente recibió
+      // `monto - gastosCierre` en la mano, y eso es lo que salió de la caja
+      // (mismo criterio que egresoDePrestamo en la app móvil).
+      const gastosCierre = p.gastosCierre != null ? Number(p.gastosCierre) : 0;
+      return {
+        id: p.id,
+        createdAt: new Date(p.createdAt).toISOString(),
+        codigo: p.codigo || p.id,
+        clienteNombre: nombreCliente(p.cliente),
+        monto,
+        gastosCierre,
+        efectivoEntregado: Math.max(0, monto - gastosCierre),
+        tasaInteres: Number(p.tasaInteres || 0),
+        plazo: p.plazo || 1,
+      };
+    });
 
     const saldoInicial = Number(jornada.saldoInicial || 0);
     const saldoFinal = jornada.saldoFinal != null ? Number(jornada.saldoFinal) : null;
@@ -499,7 +508,7 @@ export class AdminOrganizacionService {
     // El total de desembolsos del cuadre sale del campo acumulado de la jornada
     // (fuente de verdad del cierre); la lista derivada solo lo respalda cuando
     // el campo viene en 0 — mismo criterio que la app móvil.
-    const totalPrestamosListados = prestamosDetalle.reduce((s, p) => s + p.monto, 0);
+    const totalPrestamosListados = prestamosDetalle.reduce((s, p) => s + p.efectivoEntregado, 0);
     const prestamosCampo = Number(jornada.prestamos || 0);
     const totalPrestamos = prestamosCampo > 0 ? prestamosCampo : totalPrestamosListados;
 

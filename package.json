@@ -22,7 +22,8 @@
     "create-superadmin": "tsx src/scripts/create-superadmin.ts",
     "migrar-proveedor-pago": "tsx src/scripts/migrar-proveedor-pago.ts",
     "limpiar-datos": "tsx src/scripts/limpiar-datos.ts",
-    "calibrar-scoring": "tsx src/scripts/calibrar-scoring.ts"
+    "calibrar-scoring": "tsx src/scripts/calibrar-scoring.ts",
+    "reparar-cuadres-renovacion": "tsx src/scripts/reparar-cuadres-renovacion.ts"
   },
   "keywords": [
     "suite",
