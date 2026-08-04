@@ -445,11 +445,10 @@ export class AdminOrganizacionService {
           deletedAt: null,
           createdAt: { gte: inicioVentana, lte: finVentana },
           cliente: { organizacionId, rutaId: jornada.rutaId },
-          // NULL = préstamos anteriores a este campo, se tratan como incluidos.
-          // Se lista explícitamente en vez de `NOT: { incluirEnJornada: false }`
-          // porque en SQL una comparación contra NULL no es TRUE y descartaría
-          // justo esas filas antiguas.
-          OR: [{ incluirEnJornada: null }, { incluirEnJornada: true }],
+          // Se traen TODOS (incluidos y excluidos) para que el panel de soporte
+          // pueda mostrar los excluidos con opción de reactivarlos. El filtro
+          // anterior (OR null/true) ocultaba los excluidos y no había forma de
+          // corregirlos desde la web.
         },
         include: { cliente: { select: { nombres: true, apellidos: true } } },
         orderBy: { createdAt: 'desc' },
@@ -487,6 +486,10 @@ export class AdminOrganizacionService {
       // `monto - gastosCierre` en la mano, y eso es lo que salió de la caja
       // (mismo criterio que egresoDePrestamo en la app móvil).
       const gastosCierre = p.gastosCierre != null ? Number(p.gastosCierre) : 0;
+      // `excluido = true` cuando el cobrador apagó el interruptor "incluir en
+      // jornada" al crear el préstamo. NULL se trata como incluido (préstamos
+      // creados antes de que existiera ese campo).
+      const excluido = p.incluirEnJornada === false;
       return {
         id: p.id,
         createdAt: new Date(p.createdAt).toISOString(),
@@ -497,6 +500,7 @@ export class AdminOrganizacionService {
         efectivoEntregado: Math.max(0, monto - gastosCierre),
         tasaInteres: Number(p.tasaInteres || 0),
         plazo: p.plazo || 1,
+        excluido,
       };
     });
 
@@ -508,7 +512,10 @@ export class AdminOrganizacionService {
     // El total de desembolsos del cuadre sale del campo acumulado de la jornada
     // (fuente de verdad del cierre); la lista derivada solo lo respalda cuando
     // el campo viene en 0 — mismo criterio que la app móvil.
-    const totalPrestamosListados = prestamosDetalle.reduce((s, p) => s + p.efectivoEntregado, 0);
+    // Solo los incluidos aportan al cuadre (mismo criterio que la app móvil).
+    const totalPrestamosListados = prestamosDetalle
+      .filter((p) => !p.excluido)
+      .reduce((s, p) => s + p.efectivoEntregado, 0);
     const prestamosCampo = Number(jornada.prestamos || 0);
     const totalPrestamos = prestamosCampo > 0 ? prestamosCampo : totalPrestamosListados;
 
@@ -638,6 +645,26 @@ export class AdminOrganizacionService {
     }
 
     throw new Error('Tipo de registro no soportado. Tipos válidos: PAGO, PRESTAMO, JORNADA, GASTO.');
+  }
+
+  /**
+   * Activa `incluirEnJornada = true` en un préstamo que el cobrador excluyó
+   * al crearlo (interruptor "incluir en jornada" apagado). Tras sincronizar, la
+   * app móvil lo sumará al cuadre de la jornada correspondiente.
+   */
+  async incluirPrestamoEnJornada(organizacionId: string, prestamoId: string) {
+    const prestamo = await prisma.prestamo.findFirst({
+      where: { id: prestamoId, deletedAt: null, cliente: { organizacionId } },
+      select: { id: true, codigo: true, incluirEnJornada: true },
+    });
+    if (!prestamo) throw new NotFoundError('El préstamo no fue encontrado en esta organización.');
+
+    await prisma.prestamo.update({
+      where: { id: prestamoId },
+      data: { incluirEnJornada: true },
+    });
+
+    return { prestamoId, codigo: prestamo.codigo, mensaje: 'El préstamo ahora se incluye en la jornada.' };
   }
 
   /** Exporta la estructura completa de Clientes y Préstamos de la organización a JSON. */

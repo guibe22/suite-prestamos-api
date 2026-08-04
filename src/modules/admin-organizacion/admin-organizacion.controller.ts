@@ -93,4 +93,13 @@ export class AdminOrganizacionController {
       next(error);
     }
   };
+
+  incluirPrestamoEnJornada = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const resultado = await this.service.incluirPrestamoEnJornada(req.params.id, req.params.prestamoId);
+      sendSuccess(res, resultado.mensaje, resultado);
+    } catch (error) {
+      next(error);
+    }
+  };
 }

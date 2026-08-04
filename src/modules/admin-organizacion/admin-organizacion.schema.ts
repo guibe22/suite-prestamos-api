@@ -31,3 +31,9 @@ export const jornadaParamsSchema = z.object({
   id: z.string().uuid('El id de la organización no es válido.'),
   jornadaId: z.string().min(1, 'El id de la jornada es obligatorio.'),
 });
+
+// Igual que jornadaParamsSchema: los préstamos también tienen ids de WatermelonDB.
+export const prestamoParamsSchema = z.object({
+  id: z.string().uuid('El id de la organización no es válido.'),
+  prestamoId: z.string().min(1, 'El id del préstamo es obligatorio.'),
+});
