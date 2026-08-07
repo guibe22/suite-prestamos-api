@@ -620,11 +620,14 @@ export class SincronizacionService {
         if (clientRecord.deletedAt) {
           // Si está marcado como borrado, va a la lista de eliminados
           deleted.push(clientRecord.id);
-        } else if (!lastPulledDate || new Date(record.createdAt) > lastPulledDate) {
-          // Creado después de la última sincronización (o primera sincronización)
+        } else if (!lastPulledDate) {
+          // Primera sincronización (lastPulledAt = 0): todos los registros van a created
           created.push(clientRecord);
         } else {
-          // Modificado después de la última sincronización pero creado antes
+          // Sincronización incremental (lastPulledAt > 0): todos los registros nuevos o modificados
+          // van a updated. WatermelonDB actualizará los que ya existen localmente (creados por este dispositivo)
+          // y creará automáticamente los que no existan aún (creados por otros dispositivos),
+          // evitando el diagnosticError: "[Sync] Server wants client to create record..., but it already exists locally".
           updated.push(clientRecord);
         }
       }
@@ -717,7 +720,7 @@ export class SincronizacionService {
     ];
 
     // Ejecutamos todo dentro de una transaccion de Prisma
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: any) => {
       // Serializa los pushes concurrentes de la MISMA organización (ej. dos
       // dispositivos syncando a la vez): sin este lock, ambos podrían leer el
       // mismo conteo de uso antes de que ninguno hubiera insertado nada, y
