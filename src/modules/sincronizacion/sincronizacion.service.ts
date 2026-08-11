@@ -694,6 +694,12 @@ export class SincronizacionService {
       return;
     }
 
+    // Timestamp del servidor para esta transacción de push: garantiza que todo
+    // registro creado o modificado reciba un `updatedAt` exactamente del servidor,
+    // permitiendo que otros dispositivos en sincronización incremental (PULL)
+    // reciban los cambios aunque sus relojes locales difieran.
+    const pushTimestamp = new Date();
+
     const nuevosClientes = changes.clientes?.created?.length ?? 0;
     const nuevasRutas = changes.rutas?.created?.length ?? 0;
     const nuevosPrestamos = changes.prestamos?.created?.length ?? 0;
@@ -902,6 +908,7 @@ export class SincronizacionService {
               this.sanitizeForPrisma(table.name, this.mapClientDataToPrisma(item)),
               userRol
             );
+            mappedData.updatedAt = pushTimestamp;
 
             // Forzar que el registro pertenezca a la organizacion del usuario si el modelo lo tiene
             if (table.hasOrgId) {
@@ -1088,6 +1095,7 @@ export class SincronizacionService {
               this.sanitizeForPrisma(table.name, this.mapClientDataToPrisma(item)),
               userRol
             );
+            mappedData.updatedAt = pushTimestamp;
 
             if (table.name === 'clientes' && mappedData.rutaId) {
               await this.ensureRutaExists(tx, mappedData.rutaId, organizacionId);
