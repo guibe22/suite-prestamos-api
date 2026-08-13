@@ -1,4 +1,6 @@
-import 'dotenv/config';
+try {
+  await import('dotenv/config');
+} catch (_) {}
 import { prisma } from '../config/database.js';
 import { PagoService } from '../modules/pago/pago.service.js';
 
@@ -13,31 +15,44 @@ async function main() {
   const orgArgIndex = args.indexOf('--org');
   const orgId = orgArgIndex !== -1 ? args[orgArgIndex + 1] : null;
 
-  const codigoArgIndex = args.indexOf('--codigo');
-  const codigoFiltro = codigoArgIndex !== -1 ? args[codigoArgIndex + 1] : null;
+  // Flexible argument parser
+  let codigoFiltro: string | null = null;
+  let cuotasInicialesManual: number | null = null;
 
-  const idArgIndex = args.indexOf('--id');
-  const idFiltro = idArgIndex !== -1 ? args[idArgIndex + 1] : null;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--codigo' || arg === '-c' || arg === 'codigo') {
+      if (args[i + 1] && !args[i + 1].startsWith('-')) {
+        codigoFiltro = args[i + 1];
+        i++;
+      }
+    } else if (arg === '--cuotas-iniciales' || arg === '--iniciales' || arg === 'cuotas-iniciales') {
+      if (args[i + 1]) {
+        cuotasInicialesManual = parseInt(args[i + 1], 10);
+        i++;
+      }
+    } else if (!arg.startsWith('-') && arg !== 'apply' && arg !== 'codigo' && !codigoFiltro) {
+      codigoFiltro = arg;
+    }
+  }
 
   console.log('============================================================');
   console.log('       🛠️  REPARACIÓN Y DIAGNÓSTICO DE PRÉSTAMOS           ');
   console.log('============================================================');
   console.log(isApply ? '⚠️  MODO: APLICAR CAMBIOS EN BASE DE DATOS' : '💡 MODO: DIAGNÓSTICO / PREVISUALIZACIÓN (Sin modificar BD)');
-  if (codigoFiltro) console.log(`🔍 Filtro por Código: "${codigoFiltro}"`);
-  if (idFiltro) console.log(`🔍 Filtro por ID: "${idFiltro}"`);
+  if (codigoFiltro) console.log(`🔍 Filtro de Préstamo: "${codigoFiltro}"`);
+  if (cuotasInicialesManual !== null) console.log(`✏️  Cuotas Iniciales (Manual): ${cuotasInicialesManual}`);
   console.log('------------------------------------------------------------\n');
 
   const whereClause: any = { deletedAt: null };
   if (orgId) whereClause.cliente = { organizacionId: orgId };
   if (codigoFiltro) {
-    whereClause.codigo = { contains: codigoFiltro, mode: 'insensitive' };
-  }
-  if (idFiltro) {
-    whereClause.id = idFiltro;
-  }
-
-  // Si no se especifica código/ID, buscamos preferentemente préstamos con pagos eliminados en historial
-  if (!codigoFiltro && !idFiltro) {
+    whereClause.OR = [
+      { codigo: { contains: codigoFiltro, mode: 'insensitive' } },
+      { id: codigoFiltro },
+    ];
+  } else {
+    // Si no se filtra un código específico, buscar préstamos con pagos eliminados
     whereClause.pagos = { some: { deletedAt: { not: null } } };
   }
 
@@ -65,7 +80,7 @@ async function main() {
   });
 
   if (prestamos.length === 0) {
-    console.log('✅ No se encontraron préstamos desalineados o con cobros eliminados.');
+    console.log(`❌ No se encontró ningún préstamo con el filtro "${codigoFiltro || 'pagos eliminados'}".`);
     return;
   }
 
@@ -92,38 +107,45 @@ async function main() {
     const pagosEliminados = todosLosPagos.filter((pg) => !!pg.deletedAt);
 
     const cuotasPagadasActuales = cuotas.filter((c) => c.estado === 'PAGADA').length;
-    const totalMontoCuotasPagadasActual = cuotas.reduce((s, c) => s + Number(c.montoPagado || 0), 0);
-    const totalMontoPagosHistoricos = todosLosPagos.reduce((s, pg) => s + Number(pg.monto || 0), 0);
-    const montoInicialPagado = Math.max(0, totalMontoCuotasPagadasActual - totalMontoPagosHistoricos);
-
     const valorCuota = Number(cuotas[0]?.montoTotal || (Number(p.monto) * (1 + Number(p.tasaInteres) / 100)) / Number(p.plazo));
-    const cuotasInicialesPagadas = Math.round(montoInicialPagado / (valorCuota || 1));
+
+    // Detección automática de cuotas nacidas como pre-pagadas:
+    // Cuotas cuya fecha de vencimiento sea anterior a la fecha de creación del préstamo o del primer pago en tabla Pago
+    const fechaCortePrimerPago = pagosVigentes.length > 0
+      ? pagosVigentes[0].fechaPago.getTime()
+      : p.createdAt.getTime();
+
+    let cuotasInicialesDetectadas = 0;
+    for (const c of cuotas) {
+      const vencTs = c.fechaVencimiento.getTime();
+      if (vencTs < fechaCortePrimerPago - 12 * 60 * 60 * 1000) {
+        cuotasInicialesDetectadas++;
+      }
+    }
+
+    const cuotasInicialesUsar = cuotasInicialesManual !== null ? cuotasInicialesManual : cuotasInicialesDetectadas;
+    const montoInicialPagado = cuotasInicialesUsar * valorCuota;
+
     const montoVigenteTotal = pagosVigentes.reduce((s, pg) => s + Number(pg.monto), 0);
     const cuotasVigentesPagadas = Math.round(montoVigenteTotal / (valorCuota || 1));
-    const cuotasPostRecalculo = Math.min(Number(p.plazo), cuotasInicialesPagadas + cuotasVigentesPagadas);
+    const cuotasPostRecalculo = Math.min(Number(p.plazo), cuotasInicialesUsar + cuotasVigentesPagadas);
 
-    const desalineado = cuotasPagadasActuales !== cuotasPostRecalculo;
+    const desalineado = cuotasPagadasActuales !== cuotasPostRecalculo || (cuotasInicialesManual !== null);
 
     if (desalineado) totalmenteAfectados++;
 
-    // Si es un escaneo general y el préstamo NO está desalineado, omitir detalles largos
-    if (!codigoFiltro && !idFiltro && !desalineado) {
-      console.log(`✔️  Préstamo ${codigoPrestamo} (${clienteNombre}): OK (${cuotasPagadasActuales}/${p.plazo} cuotas). No requiere reparación.`);
-      continue;
-    }
-
-    console.log(`\n📌 PRÉSTAMO: ${codigoPrestamo} ${desalineado ? '⚠️  [DESALINEADO DETECTADO]' : '✅ [ESTADO SALUDABLE]'}`);
+    console.log(`📌 PRÉSTAMO: ${codigoPrestamo} ${desalineado ? '⚠️  [REVISIÓN / RECÁLCULO NECESARIO]' : '✅ [ESTADO SALUDABLE]'}`);
     console.log(`   👤 Cliente: ${clienteNombre} (Doc: ${clienteId})`);
-    console.log(`   📊 Estado actual: ${p.estado} | Mora acumulada: ${formatMoney(Number(p.moraAcumulada || 0))}`);
-    console.log(`   🔢 Cuotas totales: ${p.plazo} | Cuota valor aprox: ${formatMoney(valorCuota)}`);
+    console.log(`   📊 Estado actual en BD: ${p.estado} | Mora acumulada: ${formatMoney(Number(p.moraAcumulada || 0))}`);
+    console.log(`   🔢 Cuotas totales: ${p.plazo} | Valor cuota: ${formatMoney(valorCuota)}`);
     console.log(`   💳 Pagos en tabla 'pagos': ${pagosVigentes.length} vigente(s), ${pagosEliminados.length} eliminado(s)`);
     console.log(`   --------------------------------------------------------`);
     console.log(`   📉 ESTADO ACTUAL EN BD:       ${cuotasPagadasActuales} / ${p.plazo} cuotas pagadas`);
-    console.log(`   💡 BASE PAGADA DE INICIO:      ${cuotasInicialesPagadas} cuotas (${formatMoney(montoInicialPagado)})`);
+    console.log(`   💡 BASE DE CUOTAS INICIALES:   ${cuotasInicialesUsar} cuotas (${formatMoney(montoInicialPagado)}) ${cuotasInicialesManual !== null ? '[MANUAL]' : '[DETECTADO]'}`);
     console.log(`   ✨ TRAS RECÁLCULO QUEDARÁN:  ${cuotasPostRecalculo} / ${p.plazo} cuotas pagadas`);
 
     if (desalineado) {
-      console.log(`   🚨 DISCREPANCIA: Las cuotas pagadas pasarán de ${cuotasPagadasActuales} a ${cuotasPostRecalculo} cuotas.`);
+      console.log(`   🚨 REAJUSTE: Las cuotas pagadas pasarán de ${cuotasPagadasActuales} a ${cuotasPostRecalculo} cuotas.`);
     }
 
     if (pagosEliminados.length > 0) {
@@ -134,34 +156,45 @@ async function main() {
     }
 
     if (isApply) {
-      if (desalineado || codigoFiltro || idFiltro) {
-        try {
-          await prisma.$transaction(async (tx: any) => {
-            await pagoService.recalcularPrestamo(tx, p.id);
-          });
-          reparados++;
-          console.log(`   ✅ REPARADO Y RESTAURADO EN BASE DE DATOS ÉXITOSAMENTE.`);
-        } catch (err: any) {
-          console.log(`   ❌ ERROR AL REPARAR: ${err?.message || String(err)}`);
-        }
-      } else {
-        console.log(`   ℹ️  No requiere reparación (ya está correcto).`);
+      try {
+        await prisma.$transaction(async (tx: any) => {
+          if (cuotasInicialesUsar > 0) {
+            for (let i = 0; i < cuotas.length; i++) {
+              const c = cuotas[i];
+              const yaPagadaInicial = i < cuotasInicialesUsar;
+              await tx.cuota.update({
+                where: { id: c.id },
+                data: {
+                  montoPagado: yaPagadaInicial ? c.montoTotal : 0,
+                  estado: yaPagadaInicial ? 'PAGADA' : 'PENDIENTE',
+                  fechaPago: yaPagadaInicial ? c.fechaVencimiento : null,
+                },
+              });
+            }
+          }
+
+          await pagoService.recalcularPrestamo(tx, p.id);
+        });
+        reparados++;
+        console.log(`   ✅ REPARADO Y RESTAURADO EN BASE DE DATOS ÉXITOSAMENTE.`);
+      } catch (err: any) {
+        console.log(`   ❌ ERROR AL REPARAR: ${err?.message || String(err)}`);
       }
     } else {
       console.log(`   ℹ️  MODO DIAGNÓSTICO — No se realizaron cambios.`);
-      if (desalineado) {
-        console.log(`   👉 Para reparar este préstamo ejecuta:`);
-        console.log(`      npx tsx src/scripts/reparar-prestamos.ts --codigo ${codigoPrestamo} --apply`);
-      }
+      console.log(`   👉 Para aplicar este recálculo ejecuta:`);
+      console.log(`      tsx src/scripts/reparar-prestamos.ts ${codigoPrestamo} ${cuotasInicialesManual !== null ? `--cuotas-iniciales ${cuotasInicialesManual}` : ''} --apply`);
     }
+
+    console.log('------------------------------------------------------------\n');
   }
 
   console.log('\n============================================================');
   console.log(`📊 RESUMEN DEL DIAGNÓSTICO:`);
-  console.log(`   Total analizados con pagos eliminados: ${prestamos.length}`);
-  console.log(`   Préstamos desalineados a reparar:     ${totalmenteAfectados}`);
+  console.log(`   Total procesados:                  ${prestamos.length}`);
+  console.log(`   Préstamos reajustados / a reparar: ${totalmenteAfectados}`);
   if (isApply) {
-    console.log(`   Préstamos reparados en BD:           ${reparados}`);
+    console.log(`   Préstamos reparados en BD:         ${reparados}`);
   }
   console.log('============================================================\n');
 }

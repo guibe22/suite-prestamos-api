@@ -26,7 +26,8 @@
     "reparar-cuadres-renovacion": "tsx src/scripts/reparar-cuadres-renovacion.ts",
     "reparar-cuadres-renovacion:apply": "tsx src/scripts/reparar-cuadres-renovacion.ts --apply",
     "reparar-prestamos": "tsx src/scripts/reparar-prestamos.ts",
-    "reparar-prestamos:apply": "tsx src/scripts/reparar-prestamos.ts --apply"
+    "reparar-prestamos:apply": "tsx src/scripts/reparar-prestamos.ts --apply",
+    "inspect-prestamo": "tsx src/scripts/inspect-prestamo.ts"
   },
   "keywords": [
     "suite",
