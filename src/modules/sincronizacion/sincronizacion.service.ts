@@ -1,11 +1,13 @@
 import { prisma } from '../../config/database.js';
 import { logger } from '../../config/logger.js';
 import { SuscripcionService } from '../suscripcion/suscripcion.service.js';
+import { PagoService } from '../pago/pago.service.js';
 import { ForbiddenError } from '../../shared/errors/custom.error.js';
 import type { PullResponse, WatermelonChanges } from './sincronizacion.types.js';
 
 export class SincronizacionService {
   private suscripcionService = new SuscripcionService();
+  private pagoService = new PagoService();
   /**
    * Helper para mapear fechas (objetos Date) a timestamps (milisegundos)
    * y Decimales de Prisma a numbers para su consumo en el cliente
@@ -841,6 +843,13 @@ export class SincronizacionService {
                   valoresAnteriores: JSON.parse(JSON.stringify(p)),
                 })),
               });
+
+              for (const pagoEliminado of pagosPrevios) {
+                await this.pagoService.recalcularPrestamo(tx, pagoEliminado.prestamoId, pagoEliminado);
+                if (pagoEliminado.jornadaId) {
+                  await this.pagoService.recalcularEfectivoCobradoJornada(tx, pagoEliminado.jornadaId);
+                }
+              }
             }
           }
         }

@@ -16,13 +16,13 @@ export class PagoService {
       throw new NotFoundError('El pago no existe en tu organización.');
     }
 
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: any) => {
       await tx.pago.update({
         where: { id },
         data: { deletedAt: new Date(), deletedBy: actorId },
       });
 
-      await this.recalcularPrestamo(tx, pago.prestamoId);
+      await this.recalcularPrestamo(tx, pago.prestamoId, pago);
       if (pago.jornadaId) {
         await this.recalcularEfectivoCobradoJornada(tx, pago.jornadaId);
       }
@@ -35,7 +35,7 @@ export class PagoService {
    * vuelve a tocar ese total. Se recalcula desde cero con los pagos vigentes
    * de la jornada para que el cuadre no quede inflado para siempre.
    */
-  private async recalcularEfectivoCobradoJornada(tx: any, jornadaId: string): Promise<void> {
+  async recalcularEfectivoCobradoJornada(tx: any, jornadaId: string): Promise<void> {
     const pagosVigentes = await tx.pago.findMany({
       where: { jornadaId, deletedAt: null },
     });
@@ -51,11 +51,11 @@ export class PagoService {
 
   /**
    * Reinicia las cuotas del préstamo y redistribuye los pagos vigentes en
-   * orden cronológico, con el mismo criterio secuencial (cuota más antigua
-   * primero) que usa la app al registrar un cobro. Así el resultado es
-   * correcto sin importar cuál pago se elimine.
+   * orden cronológico, preservando la base de cuotas pagadas de inicio (si el
+   * préstamo nació con cuotas pre-pagadas) y restituyendo la mora cobrada
+   * del pago eliminado.
    */
-  private async recalcularPrestamo(tx: any, prestamoId: string): Promise<void> {
+  async recalcularPrestamo(tx: any, prestamoId: string, pagoEliminado?: any): Promise<void> {
     const prestamo = await tx.prestamo.findUnique({ where: { id: prestamoId } });
     if (!prestamo) return;
 
@@ -69,6 +69,20 @@ export class PagoService {
       orderBy: { fechaPago: 'asc' },
     });
 
+    // 1. Preservar cuotas que nacieron pagadas de inicio (creadas como PAGADA sin fila en la tabla Pago)
+    const totalCuotasMontoPagadoActual = cuotas.reduce(
+      (sum: number, c: any) => sum + Number(c.montoPagado || 0),
+      0
+    );
+    const todosLosPagosHistoricos = await tx.pago.findMany({
+      where: { prestamoId },
+    });
+    const totalMontoPagosHistoricos = todosLosPagosHistoricos.reduce(
+      (sum: number, p: any) => sum + Number(p.monto || 0),
+      0
+    );
+    const montoInicialPagado = Math.max(0, totalCuotasMontoPagadoActual - totalMontoPagosHistoricos);
+
     const cuotasCalculadas = cuotas.map((c: any) => ({
       id: c.id,
       montoTotal: Number(c.montoTotal),
@@ -76,6 +90,25 @@ export class PagoService {
     }));
 
     let cuotaIndex = 0;
+
+    // Aplicar primero la base de cuotas pagadas de inicio
+    let restanteInicial = montoInicialPagado;
+    while (restanteInicial > 0 && cuotaIndex < cuotasCalculadas.length) {
+      const cuota = cuotasCalculadas[cuotaIndex];
+      const pendiente = cuota.montoTotal - cuota.montoPagado;
+      if (pendiente <= 0.05) {
+        cuotaIndex++;
+        continue;
+      }
+      const aplicar = Math.min(restanteInicial, pendiente);
+      cuota.montoPagado += aplicar;
+      restanteInicial -= aplicar;
+      if (cuota.montoTotal - cuota.montoPagado <= 0.05) {
+        cuotaIndex++;
+      }
+    }
+
+    // Aplicar luego los pagos vigentes cronológicamente
     for (const pago of pagosVigentes) {
       let restante = Number(pago.monto);
       while (restante > 0 && cuotaIndex < cuotasCalculadas.length) {
@@ -94,12 +127,7 @@ export class PagoService {
       }
     }
 
-    // 'PAGADA'/'LIQUIDADO' (no 'PAGADO'/'PARCIAL' del comentario de
-    // schema.prisma): la app móvil es quien realmente escribe y lee estos
-    // valores en todas sus pantallas (filtros, badges, colores) y solo
-    // conoce ese binario PENDIENTE/PAGADA y ACTIVO/LIQUIDADO. Escribir el
-    // valor "documentado" pero no usado por nadie dejaría estos registros
-    // invisibles para la propia app tras sincronizar.
+    // 'PAGADA'/'LIQUIDADO': escribir el valor usado por el app móvil
     for (const cuota of cuotasCalculadas) {
       const pagada = cuota.montoTotal - cuota.montoPagado <= 0.05;
       await tx.cuota.update({
@@ -107,19 +135,26 @@ export class PagoService {
         data: {
           montoPagado: cuota.montoPagado,
           estado: pagada ? 'PAGADA' : 'PENDIENTE',
-          fechaPago: pagada ? new Date() : null,
+          fechaPago: pagada ? (cuota.montoPagado > 0 ? new Date() : null) : null,
         },
       });
     }
 
     const totalLoanValue = Number(prestamo.monto) + Number(prestamo.monto) * (Number(prestamo.tasaInteres) / 100);
-    const totalPagado = pagosVigentes.reduce((sum: number, p: any) => sum + Number(p.monto), 0);
+    const totalPagado = montoInicialPagado + pagosVigentes.reduce((sum: number, p: any) => sum + Number(p.monto), 0);
     const liquidado = totalLoanValue - totalPagado <= 0.05;
 
-    if (liquidado && prestamo.estado !== 'LIQUIDADO') {
-      await tx.prestamo.update({ where: { id: prestamoId }, data: { estado: 'LIQUIDADO' } });
-    } else if (!liquidado && prestamo.estado === 'LIQUIDADO') {
-      await tx.prestamo.update({ where: { id: prestamoId }, data: { estado: 'ACTIVO' } });
-    }
+    // Restituir mora cobrada si el pago eliminado la tenía, y resetear moraFechaCalculo
+    const moraCobradaEliminada = Number(pagoEliminado?.moraCobrada ?? 0);
+    const nuevaMoraAcumulada = Math.max(0, Number(prestamo.moraAcumulada || 0) + moraCobradaEliminada);
+
+    await tx.prestamo.update({
+      where: { id: prestamoId },
+      data: {
+        estado: liquidado ? 'LIQUIDADO' : 'ACTIVO',
+        moraAcumulada: nuevaMoraAcumulada,
+        moraFechaCalculo: null,
+      },
+    });
   }
 }
