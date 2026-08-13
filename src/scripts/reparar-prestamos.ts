@@ -40,17 +40,25 @@ async function main() {
   console.log('       🛠️  REPARACIÓN Y DIAGNÓSTICO DE PRÉSTAMOS           ');
   console.log('============================================================');
   console.log(isApply ? '⚠️  MODO: APLICAR CAMBIOS EN BASE DE DATOS' : '💡 MODO: DIAGNÓSTICO / PREVISUALIZACIÓN (Sin modificar BD)');
-  if (codigoFiltro) console.log(`🔍 Filtro de Préstamo: "${codigoFiltro}"`);
+  if (codigoFiltro) console.log(`🔍 Buscando Préstamo / Cliente: "${codigoFiltro}"`);
   if (cuotasInicialesManual !== null) console.log(`✏️  Cuotas Iniciales (Manual): ${cuotasInicialesManual}`);
   console.log('------------------------------------------------------------\n');
 
   const whereClause: any = { deletedAt: null };
   if (orgId) whereClause.cliente = { organizacionId: orgId };
+
   if (codigoFiltro) {
-    whereClause.OR = [
+    const digitsOnly = codigoFiltro.replace(/[^0-9]/g, '');
+    const searchTerms: any[] = [
       { codigo: { contains: codigoFiltro, mode: 'insensitive' } },
+      { cliente: { nombres: { contains: codigoFiltro, mode: 'insensitive' } } },
+      { cliente: { apellidos: { contains: codigoFiltro, mode: 'insensitive' } } },
       { id: codigoFiltro },
     ];
+    if (digitsOnly && digitsOnly.length > 0) {
+      searchTerms.push({ codigo: { contains: digitsOnly, mode: 'insensitive' } });
+    }
+    whereClause.OR = searchTerms;
   } else {
     // Si no se filtra un código específico, buscar préstamos con pagos eliminados
     whereClause.pagos = { some: { deletedAt: { not: null } } };
@@ -80,7 +88,7 @@ async function main() {
   });
 
   if (prestamos.length === 0) {
-    console.log(`❌ No se encontró ningún préstamo con el filtro "${codigoFiltro || 'pagos eliminados'}".`);
+    console.log(`❌ No se encontró ningún préstamo o cliente con "${codigoFiltro || 'pagos eliminados'}".`);
     return;
   }
 
@@ -183,7 +191,7 @@ async function main() {
     } else {
       console.log(`   ℹ️  MODO DIAGNÓSTICO — No se realizaron cambios.`);
       console.log(`   👉 Para aplicar este recálculo ejecuta:`);
-      console.log(`      tsx src/scripts/reparar-prestamos.ts ${codigoPrestamo} ${cuotasInicialesManual !== null ? `--cuotas-iniciales ${cuotasInicialesManual}` : ''} --apply`);
+      console.log(`      npx tsx src/scripts/reparar-prestamos.ts ${codigoPrestamo} ${cuotasInicialesManual !== null ? `--cuotas-iniciales ${cuotasInicialesManual}` : ''} --apply`);
     }
 
     console.log('------------------------------------------------------------\n');

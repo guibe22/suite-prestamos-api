@@ -1,5 +1,6 @@
 import { prisma } from '../../config/database.js';
 import { NotFoundError } from '../../shared/errors/custom.error.js';
+import { PagoService } from '../pago/pago.service.js';
 import { getPagination, getPaginationMeta } from '../../utils/pagination.js';
 import type { actualizarSuscripcionOrgSchema, listarOrganizacionesQuerySchema } from './admin-organizacion.schema.js';
 import type { z } from 'zod';
@@ -903,5 +904,11 @@ export class AdminOrganizacionService {
     }
 
     return { clientesCreados, prestamosCreados, rutasCreadas };
+  }
+
+  async recalcularPrestamo(organizacionId: string, prestamoId: string, cuotasIniciales?: number) {
+    const pagoService = new PagoService();
+    await pagoService.recalcularPrestamoAdmin(organizacionId, prestamoId, cuotasIniciales);
+    return { mensaje: 'Préstamo recalculado y restaurado con éxito.' };
   }
 }

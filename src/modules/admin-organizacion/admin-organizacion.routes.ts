@@ -143,4 +143,10 @@ router.patch(
   controller.incluirPrestamoEnJornada
 );
 
+router.post(
+  '/:id/prestamos/:prestamoId/recalcular',
+  validate({ params: prestamoParamsSchema }),
+  controller.recalcularPrestamo
+);
+
 export default router;

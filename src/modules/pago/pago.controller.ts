@@ -19,4 +19,21 @@ export class PagoController {
       next(error);
     }
   };
+
+  recalcularPrestamoAdmin = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const organizacionId = req.user?.organizacionId;
+      if (!organizacionId) {
+        throw new BadRequestError('Tu usuario no pertenece a ninguna organización.');
+      }
+      const { prestamoId } = req.params;
+      const { cuotasIniciales } = req.body || {};
+      const numCuotasIniciales = typeof cuotasIniciales === 'number' ? cuotasIniciales : (cuotasIniciales ? parseInt(cuotasIniciales, 10) : undefined);
+
+      await this.pagoService.recalcularPrestamoAdmin(organizacionId, prestamoId, numCuotasIniciales);
+      sendSuccess(res, 'Préstamo recalculado y restaurado con éxito.');
+    } catch (error) {
+      next(error);
+    }
+  };
 }

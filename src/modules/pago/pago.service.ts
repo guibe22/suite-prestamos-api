@@ -27,6 +27,44 @@ export class PagoService {
         await this.recalcularEfectivoCobradoJornada(tx, pago.jornadaId);
       }
     });
+  /**
+   * Permite al administrador forzar un recálculo/reparación de un préstamo
+   * especificando opcionalmente el número de cuotas que nacieron pagadas de inicio.
+   */
+  async recalcularPrestamoAdmin(
+    organizacionId: string,
+    prestamoId: string,
+    cuotasIniciales?: number
+  ): Promise<void> {
+    const prestamo = await prisma.prestamo.findFirst({
+      where: { id: prestamoId, cliente: { organizacionId }, deletedAt: null },
+    });
+    if (!prestamo) {
+      throw new NotFoundError('El préstamo no existe en tu organización.');
+    }
+
+    await prisma.$transaction(async (tx: any) => {
+      if (typeof cuotasIniciales === 'number' && cuotasIniciales >= 0) {
+        const cuotas = await tx.cuota.findMany({
+          where: { prestamoId, deletedAt: null },
+          orderBy: { numeroCuota: 'asc' },
+        });
+        for (let i = 0; i < cuotas.length; i++) {
+          const c = cuotas[i];
+          const yaPagadaInicial = i < cuotasIniciales;
+          await tx.cuota.update({
+            where: { id: c.id },
+            data: {
+              montoPagado: yaPagadaInicial ? c.montoTotal : 0,
+              estado: yaPagadaInicial ? 'PAGADA' : 'PENDIENTE',
+              fechaPago: yaPagadaInicial ? c.fechaVencimiento : null,
+            },
+          });
+        }
+      }
+
+      await this.recalcularPrestamo(tx, prestamoId);
+    });
   }
 
   /**

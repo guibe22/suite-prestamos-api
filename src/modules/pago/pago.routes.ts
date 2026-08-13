@@ -34,4 +34,11 @@ router.delete(
   controller.eliminar
 );
 
+router.post(
+  '/recalcular-prestamo/:prestamoId',
+  authMiddleware,
+  checkRole(['ADMIN', 'SUPER_ADMIN', 'GERENTE']),
+  controller.recalcularPrestamoAdmin
+);
+
 export default router;

@@ -102,4 +102,15 @@ export class AdminOrganizacionController {
       next(error);
     }
   };
+
+  recalcularPrestamo = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { cuotasIniciales } = req.body || {};
+      const numCuotasIniciales = typeof cuotasIniciales === 'number' ? cuotasIniciales : (cuotasIniciales ? parseInt(cuotasIniciales, 10) : undefined);
+      const resultado = await this.service.recalcularPrestamo(req.params.id, req.params.prestamoId, numCuotasIniciales);
+      sendSuccess(res, resultado.mensaje, resultado);
+    } catch (error) {
+      next(error);
+    }
+  };
 }
