@@ -911,4 +911,90 @@ export class AdminOrganizacionService {
     await pagoService.recalcularPrestamoAdmin(organizacionId, prestamoId, cuotasIniciales);
     return { mensaje: 'Préstamo recalculado y restaurado con éxito.' };
   }
+
+  async obtenerDetallePrestamo(organizacionId: string, prestamoId: string) {
+    const prestamo = await prisma.prestamo.findFirst({
+      where: { id: prestamoId, cliente: { organizacionId }, deletedAt: null },
+      include: {
+        cliente: true,
+        cuotas: {
+          where: { deletedAt: null },
+          orderBy: { numeroCuota: 'asc' },
+        },
+        pagos: {
+          orderBy: { fechaPago: 'desc' },
+        },
+      },
+    });
+
+    if (!prestamo) {
+      throw new NotFoundError('El préstamo no existe en esta organización.');
+    }
+
+    return prestamo;
+  }
+
+  async actualizarPrestamoAdmin(
+    organizacionId: string,
+    prestamoId: string,
+    payload: {
+      estado?: string;
+      moraAcumulada?: number;
+      cuotas?: Array<{ id: string; estado: 'PAGADA' | 'PENDIENTE'; montoPagado?: number }>;
+      cuotasIniciales?: number;
+    }
+  ) {
+    const prestamo = await prisma.prestamo.findFirst({
+      where: { id: prestamoId, cliente: { organizacionId }, deletedAt: null },
+    });
+
+    if (!prestamo) {
+      throw new NotFoundError('El préstamo no existe en esta organización.');
+    }
+
+    await prisma.$transaction(async (tx: any) => {
+      const updateData: any = { updatedAt: new Date() };
+      if (payload.estado) updateData.estado = payload.estado;
+      if (typeof payload.moraAcumulada === 'number') {
+        updateData.moraAcumulada = Math.max(0, payload.moraAcumulada);
+        updateData.moraFechaCalculo = new Date();
+      }
+
+      await tx.prestamo.update({
+        where: { id: prestamoId },
+        data: updateData,
+      });
+
+      if (Array.isArray(payload.cuotas) && payload.cuotas.length > 0) {
+        for (const item of payload.cuotas) {
+          const cuotaDb = await tx.cuota.findUnique({ where: { id: item.id } });
+          if (cuotaDb && cuotaDb.prestamoId === prestamoId) {
+            const esPagada = item.estado === 'PAGADA';
+            const montoFinal = typeof item.montoPagado === 'number'
+              ? item.montoPagado
+              : (esPagada ? Number(cuotaDb.montoTotal) : 0);
+
+            await tx.cuota.update({
+              where: { id: item.id },
+              data: {
+                estado: esPagada ? 'PAGADA' : 'PENDIENTE',
+                montoPagado: montoFinal,
+                fechaPago: esPagada ? (cuotaDb.fechaPago || cuotaDb.fechaVencimiento || new Date()) : null,
+                updatedAt: new Date(),
+              },
+            });
+          }
+        }
+      }
+
+      const pagoService = new PagoService();
+      if (typeof payload.cuotasIniciales === 'number') {
+        await pagoService.recalcularPrestamoAdmin(organizacionId, prestamoId, payload.cuotasIniciales);
+      } else {
+        await pagoService.recalcularPrestamo(tx, prestamoId);
+      }
+    });
+
+    return { mensaje: 'Préstamo y cuotas actualizados exitosamente.' };
+  }
 }

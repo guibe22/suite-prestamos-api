@@ -27,6 +27,8 @@ export class PagoService {
         await this.recalcularEfectivoCobradoJornada(tx, pago.jornadaId);
       }
     });
+  }
+
   /**
    * Permite al administrador forzar un recálculo/reparación de un préstamo
    * especificando opcionalmente el número de cuotas que nacieron pagadas de inicio.

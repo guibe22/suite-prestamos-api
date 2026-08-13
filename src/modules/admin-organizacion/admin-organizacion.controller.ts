@@ -113,4 +113,22 @@ export class AdminOrganizacionController {
       next(error);
     }
   };
+
+  obtenerDetallePrestamo = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const prestamo = await this.service.obtenerDetallePrestamo(req.params.id, req.params.prestamoId);
+      sendSuccess(res, 'Detalle del préstamo recuperado con éxito.', prestamo);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  actualizarPrestamoAdmin = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const resultado = await this.service.actualizarPrestamoAdmin(req.params.id, req.params.prestamoId, req.body);
+      sendSuccess(res, resultado.mensaje, resultado);
+    } catch (error) {
+      next(error);
+    }
+  };
 }

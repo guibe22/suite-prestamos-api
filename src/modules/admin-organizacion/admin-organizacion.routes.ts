@@ -149,4 +149,16 @@ router.post(
   controller.recalcularPrestamo
 );
 
+router.get(
+  '/:id/prestamos/:prestamoId',
+  validate({ params: prestamoParamsSchema }),
+  controller.obtenerDetallePrestamo
+);
+
+router.patch(
+  '/:id/prestamos/:prestamoId',
+  validate({ params: prestamoParamsSchema }),
+  controller.actualizarPrestamoAdmin
+);
+
 export default router;
