@@ -109,19 +109,24 @@ export class PagoService {
       orderBy: { fechaPago: 'asc' },
     });
 
-    // 1. Preservar cuotas que nacieron pagadas de inicio (creadas como PAGADA sin fila en la tabla Pago)
+    // 1. Preservar cuotas que nacieron pagadas de inicio (creadas como PAGADA sin fila en la tabla Pago).
+    // Ojo: NO se puede recomputar esta base consultando "todos los pagos históricos" (incluidos los
+    // eliminados en eventos anteriores), porque `cuotas.montoPagado` ya excluye esos pagos desde el
+    // recálculo previo — volver a restarlos aquí los descuenta dos veces y subestima montoInicialPagado
+    // en préstamos con más de una eliminación en su historial. El único pago histórico que todavía no
+    // está reflejado como excluido en `cuotas` es el que se está eliminando en este mismo evento
+    // (`pagoEliminado`), así que se suma explícitamente en vez de volver a consultar la tabla completa.
     const totalCuotasMontoPagadoActual = cuotas.reduce(
       (sum: number, c: any) => sum + Number(c.montoPagado || 0),
       0
     );
-    const todosLosPagosHistoricos = await tx.pago.findMany({
-      where: { prestamoId },
-    });
-    const totalMontoPagosHistoricos = todosLosPagosHistoricos.reduce(
-      (sum: number, p: any) => sum + Number(p.monto || 0),
-      0
+    const totalMontoPagosVigentesMasEliminado =
+      pagosVigentes.reduce((sum: number, p: any) => sum + Number(p.monto || 0), 0) +
+      Number(pagoEliminado?.monto ?? 0);
+    const montoInicialPagado = Math.max(
+      0,
+      totalCuotasMontoPagadoActual - totalMontoPagosVigentesMasEliminado
     );
-    const montoInicialPagado = Math.max(0, totalCuotasMontoPagadoActual - totalMontoPagosHistoricos);
 
     const cuotasCalculadas = cuotas.map((c: any) => ({
       id: c.id,
@@ -168,14 +173,24 @@ export class PagoService {
     }
 
     // 'PAGADA'/'LIQUIDADO': escribir el valor usado por el app móvil
+    const cuotasPorId = new Map<string, any>(cuotas.map((c: any) => [c.id, c]));
     for (const cuota of cuotasCalculadas) {
       const pagada = cuota.montoTotal - cuota.montoPagado <= 0.05;
+      const original = cuotasPorId.get(cuota.id);
+      // Si la cuota ya estaba PAGADA antes de este recálculo y lo sigue estando,
+      // se conserva su fechaPago original en vez de pisarla con la fecha de hoy
+      // (esto pasa en cada eliminación de pago del préstamo, no solo en la cuota afectada).
+      const fechaPago = pagada
+        ? original?.estado === 'PAGADA' && original?.fechaPago
+          ? original.fechaPago
+          : new Date()
+        : null;
       await tx.cuota.update({
         where: { id: cuota.id },
         data: {
           montoPagado: cuota.montoPagado,
           estado: pagada ? 'PAGADA' : 'PENDIENTE',
-          fechaPago: pagada ? (cuota.montoPagado > 0 ? new Date() : null) : null,
+          fechaPago,
         },
       });
     }
