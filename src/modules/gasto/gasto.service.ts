@@ -26,6 +26,18 @@ export class GastoService {
         data: { deletedAt: new Date(), deletedBy: actorId },
       });
 
+      // Mismo hueco que tenía Pago: el DELETE directo no dejaba rastro en
+      // Auditoria. `gasto` se leyó antes del update de arriba (estado previo).
+      await tx.auditoria.create({
+        data: {
+          usuarioId: actorId,
+          accion: 'DELETE',
+          tabla: 'gastos',
+          registroId: gasto.id,
+          valoresAnteriores: JSON.parse(JSON.stringify(gasto)),
+        },
+      });
+
       if (gasto.jornadaId) {
         await this.recalcularGastosJornada(tx, gasto.jornadaId);
       }
@@ -36,8 +48,11 @@ export class GastoService {
    * JornadaCobranza.gastos se escribe desde el cliente al crear el gasto; si
    * se borra después de que la jornada cerró, nadie más vuelve a tocar ese
    * total. Se recalcula desde cero con los gastos vigentes de la jornada.
+   *
+   * No es `private`: `sincronizacion.service.ts` también la llama al procesar
+   * borrados de gastos que llegan por el push offline.
    */
-  private async recalcularGastosJornada(tx: any, jornadaId: string): Promise<void> {
+  async recalcularGastosJornada(tx: any, jornadaId: string): Promise<void> {
     const gastosVigentes = await tx.gasto.findMany({
       where: { jornadaId, deletedAt: null },
     });

@@ -2,12 +2,14 @@ import { prisma } from '../../config/database.js';
 import { logger } from '../../config/logger.js';
 import { SuscripcionService } from '../suscripcion/suscripcion.service.js';
 import { PagoService } from '../pago/pago.service.js';
+import { GastoService } from '../gasto/gasto.service.js';
 import { ForbiddenError } from '../../shared/errors/custom.error.js';
 import type { PullResponse, WatermelonChanges } from './sincronizacion.types.js';
 
 export class SincronizacionService {
   private suscripcionService = new SuscripcionService();
   private pagoService = new PagoService();
+  private gastoService = new GastoService();
   /**
    * Helper para mapear fechas (objetos Date) a timestamps (milisegundos)
    * y Decimales de Prisma a numbers para su consumo en el cliente
@@ -824,6 +826,13 @@ export class SincronizacionService {
                 include: { prestamo: { select: { clienteId: true } } },
               });
             }
+            // Mismo criterio que pagos: capturar el estado previo de los
+            // gastos que se van a borrar, para auditarlos igual que en el
+            // DELETE directo (gasto.service.ts).
+            let gastosPrevios: any[] = [];
+            if (table.name === 'gastos') {
+              gastosPrevios = await tx.gasto.findMany({ where: { id: { in: idsToDelete }, ...orgScope } });
+            }
 
             await modelTx.updateMany({
               where: { id: { in: idsToDelete }, ...orgScope },
@@ -856,6 +865,24 @@ export class SincronizacionService {
                     pagoEliminado.jornadaId,
                     pagoEliminado.prestamo.clienteId
                   );
+                }
+              }
+            }
+
+            if (gastosPrevios.length > 0) {
+              await tx.auditoria.createMany({
+                data: gastosPrevios.map((g) => ({
+                  usuarioId: userId,
+                  accion: 'DELETE',
+                  tabla: 'gastos',
+                  registroId: g.id,
+                  valoresAnteriores: JSON.parse(JSON.stringify(g)),
+                })),
+              });
+
+              for (const gastoEliminado of gastosPrevios) {
+                if (gastoEliminado.jornadaId) {
+                  await this.gastoService.recalcularGastosJornada(tx, gastoEliminado.jornadaId);
                 }
               }
             }
