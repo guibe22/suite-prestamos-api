@@ -1,10 +1,20 @@
 import { prisma } from '../../config/database.js';
 import { NotFoundError } from '../../shared/errors/custom.error.js';
+import { esRolRestringidoPorRuta, rutaIdsAccesibles, usuarioEnRutasFilter } from '../../shared/access/ruta-scope.js';
 
 export class GastoService {
-  async eliminar(organizacionId: string, id: string, actorId: string): Promise<void> {
+  async eliminar(organizacionId: string, id: string, actorId: string, actorRol: string): Promise<void> {
+    // Modelo Zero-Route: un GASTO no tiene ruta propia, cuelga de una Caja que
+    // pertenece a un usuario (Caja.usuarioId). Para GERENTE/CAJERO/COBRADOR se
+    // restringe a gastos de cajas cuyo dueño comparte una ruta con el actor
+    // (mismo criterio que ya aplica sincronizacion.service.ts en el push).
+    let scopeRuta: any = {};
+    if (esRolRestringidoPorRuta(actorRol)) {
+      const rutaIds = await rutaIdsAccesibles(actorId, organizacionId);
+      scopeRuta = { usuario: usuarioEnRutasFilter(rutaIds) };
+    }
     const gasto = await prisma.gasto.findFirst({
-      where: { id, caja: { organizacionId } },
+      where: { id, caja: { organizacionId, ...scopeRuta } },
     });
     if (!gasto) {
       throw new NotFoundError('El gasto no existe en tu organización.');

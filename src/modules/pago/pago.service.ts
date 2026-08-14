@@ -1,5 +1,7 @@
 import { prisma } from '../../config/database.js';
 import { NotFoundError } from '../../shared/errors/custom.error.js';
+import { esRolRestringidoPorRuta, rutaAccessFilter } from '../../shared/access/ruta-scope.js';
+import { calcularCargoMora } from '../../workers/mora-recalc.worker.js';
 
 export class PagoService {
   /**
@@ -8,9 +10,15 @@ export class PagoService {
    * vigentes. Evita que un préstamo quede marcado como pagado/liquidado con
    * dinero que ya no está contabilizado.
    */
-  async eliminar(organizacionId: string, id: string, actorId: string): Promise<void> {
+  async eliminar(organizacionId: string, id: string, actorId: string, actorRol: string): Promise<void> {
+    // Modelo Zero-Route: GERENTE/CAJERO/COBRADOR solo pueden borrar pagos de
+    // préstamos de clientes en una ruta que administran. Sin este scope, un
+    // GERENTE de la Ruta A podía borrar pagos de la Ruta B de su misma
+    // organización a través de este endpoint (el filtro de ruta solo existía
+    // en el motor de sincronización, no aquí).
+    const scopeRuta = esRolRestringidoPorRuta(actorRol) ? { ruta: rutaAccessFilter(actorId) } : {};
     const pago = await prisma.pago.findFirst({
-      where: { id, prestamo: { cliente: { organizacionId } } },
+      where: { id, prestamo: { cliente: { organizacionId, ...scopeRuta } } },
     });
     if (!pago) {
       throw new NotFoundError('El pago no existe en tu organización.');
@@ -32,14 +40,23 @@ export class PagoService {
   /**
    * Permite al administrador forzar un recálculo/reparación de un préstamo
    * especificando opcionalmente el número de cuotas que nacieron pagadas de inicio.
+   *
+   * `actorId`/`actorRol` quedan opcionales porque el panel de plataforma
+   * (`admin-organizacion.service.ts`, gateado a SUPER_ADMIN globalmente) llama
+   * este método sin contexto de ruta — ahí no aplica el scope Zero-Route.
    */
   async recalcularPrestamoAdmin(
     organizacionId: string,
     prestamoId: string,
-    cuotasIniciales?: number
+    cuotasIniciales?: number,
+    actorId?: string,
+    actorRol?: string
   ): Promise<void> {
+    const scopeRuta = actorId && actorRol && esRolRestringidoPorRuta(actorRol)
+      ? { ruta: rutaAccessFilter(actorId) }
+      : {};
     const prestamo = await prisma.prestamo.findFirst({
-      where: { id: prestamoId, cliente: { organizacionId }, deletedAt: null },
+      where: { id: prestamoId, cliente: { organizacionId, ...scopeRuta }, deletedAt: null },
     });
     if (!prestamo) {
       throw new NotFoundError('El préstamo no existe en tu organización.');
@@ -92,11 +109,14 @@ export class PagoService {
   /**
    * Reinicia las cuotas del préstamo y redistribuye los pagos vigentes en
    * orden cronológico, preservando la base de cuotas pagadas de inicio (si el
-   * préstamo nació con cuotas pre-pagadas) y restituyendo la mora cobrada
-   * del pago eliminado.
+   * préstamo nació con cuotas pre-pagadas) y recalculando desde cero la mora
+   * de las cuotas que queden PENDIENTE.
    */
   async recalcularPrestamo(tx: any, prestamoId: string, pagoEliminado?: any): Promise<void> {
-    const prestamo = await tx.prestamo.findUnique({ where: { id: prestamoId } });
+    const prestamo = await tx.prestamo.findUnique({
+      where: { id: prestamoId },
+      include: { cliente: { include: { organizacion: { select: { configuracion: true } } } } },
+    });
     if (!prestamo) return;
 
     const cuotas = await tx.cuota.findMany({
@@ -199,16 +219,35 @@ export class PagoService {
     const totalPagado = montoInicialPagado + pagosVigentes.reduce((sum: number, p: any) => sum + Number(p.monto), 0);
     const liquidado = totalLoanValue - totalPagado <= 0.05;
 
-    // Restituir mora cobrada si el pago eliminado la tenía, y resetear moraFechaCalculo
-    const moraCobradaEliminada = Number(pagoEliminado?.moraCobrada ?? 0);
-    const nuevaMoraAcumulada = Math.max(0, Number(prestamo.moraAcumulada || 0) + moraCobradaEliminada);
+    // Recalcular la mora desde cero sobre las cuotas que quedan PENDIENTE tras
+    // este borrado, en vez de "restituir" sumando `pagoEliminado.moraCobrada`
+    // sobre el valor actual. La suma parecía correcta pero no lo era: al
+    // resetear `moraFechaCalculo` a null, el worker nocturno (mora-recalc.worker.ts)
+    // trata el préstamo como si "nunca hubiera devengado" y le vuelve a cobrar
+    // TODO el atraso desde el vencimiento de la cuota hasta hoy, sumándolo
+    // (increment) sobre lo ya restituido — duplicando la mora del período que
+    // ya se había cubierto. Recalcular aquí con la misma fórmula que usa el
+    // worker para un préstamo nuevo (`diasDesdeUltimoCargo = Infinity`) da el
+    // valor correcto de una sola vez, y fijar `moraFechaCalculo` a ahora evita
+    // que el worker lo vuelva a recomputar desde el vencimiento.
+    const finanzas = (prestamo as any)?.cliente?.organizacion?.configuracion?.finanzas;
+    const cuotasPendientesParaMora = cuotasCalculadas
+      .filter((c: any) => c.montoTotal - c.montoPagado > 0.05)
+      .map((c: any) => {
+        const fechaVencimiento = cuotasPorId.get(c.id)?.fechaVencimiento;
+        return fechaVencimiento ? { fechaVencimiento, montoTotal: c.montoTotal, montoPagado: c.montoPagado } : null;
+      })
+      .filter((c: any): c is { fechaVencimiento: Date; montoTotal: number; montoPagado: number } => !!c);
+    const nuevaMoraAcumulada = finanzas?.tasaMora
+      ? calcularCargoMora(cuotasPendientesParaMora, finanzas, Infinity)
+      : 0;
 
     await tx.prestamo.update({
       where: { id: prestamoId },
       data: {
         estado: liquidado ? 'LIQUIDADO' : 'ACTIVO',
         moraAcumulada: nuevaMoraAcumulada,
-        moraFechaCalculo: null,
+        moraFechaCalculo: new Date(),
       },
     });
   }

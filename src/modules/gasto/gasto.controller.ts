@@ -13,7 +13,7 @@ export class GastoController {
         throw new BadRequestError('Tu usuario no pertenece a ninguna organización.');
       }
       const actorId = req.user!.id;
-      await this.gastoService.eliminar(organizacionId, req.params.id, actorId);
+      await this.gastoService.eliminar(organizacionId, req.params.id, actorId, req.user!.rol);
       sendSuccess(res, 'Gasto eliminado con éxito.');
     } catch (error) {
       next(error);

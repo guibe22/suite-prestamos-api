@@ -13,7 +13,7 @@ export class PagoController {
         throw new BadRequestError('Tu usuario no pertenece a ninguna organización.');
       }
       const actorId = req.user!.id;
-      await this.pagoService.eliminar(organizacionId, req.params.id, actorId);
+      await this.pagoService.eliminar(organizacionId, req.params.id, actorId, req.user!.rol);
       sendSuccess(res, 'Pago eliminado con éxito.');
     } catch (error) {
       next(error);
@@ -30,7 +30,7 @@ export class PagoController {
       const { cuotasIniciales } = req.body || {};
       const numCuotasIniciales = typeof cuotasIniciales === 'number' ? cuotasIniciales : (cuotasIniciales ? parseInt(cuotasIniciales, 10) : undefined);
 
-      await this.pagoService.recalcularPrestamoAdmin(organizacionId, prestamoId, numCuotasIniciales);
+      await this.pagoService.recalcularPrestamoAdmin(organizacionId, prestamoId, numCuotasIniciales, req.user!.id, req.user!.rol);
       sendSuccess(res, 'Préstamo recalculado y restaurado con éxito.');
     } catch (error) {
       next(error);
