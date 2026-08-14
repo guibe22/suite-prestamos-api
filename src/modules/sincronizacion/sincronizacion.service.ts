@@ -819,7 +819,10 @@ export class SincronizacionService {
             // (schema.prisma) existía desde antes; nadie escribía en él.
             let pagosPrevios: any[] = [];
             if (table.name === 'pagos') {
-              pagosPrevios = await tx.pago.findMany({ where: { id: { in: idsToDelete }, ...orgScope } });
+              pagosPrevios = await tx.pago.findMany({
+                where: { id: { in: idsToDelete }, ...orgScope },
+                include: { prestamo: { select: { clienteId: true } } },
+              });
             }
 
             await modelTx.updateMany({
@@ -848,6 +851,11 @@ export class SincronizacionService {
                 await this.pagoService.recalcularPrestamo(tx, pagoEliminado.prestamoId, pagoEliminado);
                 if (pagoEliminado.jornadaId) {
                   await this.pagoService.recalcularEfectivoCobradoJornada(tx, pagoEliminado.jornadaId);
+                  await this.pagoService.recalcularClientesVisitadosJornada(
+                    tx,
+                    pagoEliminado.jornadaId,
+                    pagoEliminado.prestamo.clienteId
+                  );
                 }
               }
             }

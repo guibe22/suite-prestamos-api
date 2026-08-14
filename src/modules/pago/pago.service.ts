@@ -19,6 +19,7 @@ export class PagoService {
     const scopeRuta = esRolRestringidoPorRuta(actorRol) ? { ruta: rutaAccessFilter(actorId) } : {};
     const pago = await prisma.pago.findFirst({
       where: { id, prestamo: { cliente: { organizacionId, ...scopeRuta } } },
+      include: { prestamo: { select: { clienteId: true } } },
     });
     if (!pago) {
       throw new NotFoundError('El pago no existe en tu organización.');
@@ -30,9 +31,23 @@ export class PagoService {
         data: { deletedAt: new Date(), deletedBy: actorId },
       });
 
+      // El DELETE directo (el que realmente usa la app) no dejaba rastro en
+      // Auditoria; solo el camino de sync lo hacía. Se captura el estado
+      // previo al borrado (`pago`, leído antes del update de arriba).
+      await tx.auditoria.create({
+        data: {
+          usuarioId: actorId,
+          accion: 'DELETE',
+          tabla: 'pagos',
+          registroId: pago.id,
+          valoresAnteriores: JSON.parse(JSON.stringify(pago)),
+        },
+      });
+
       await this.recalcularPrestamo(tx, pago.prestamoId, pago);
       if (pago.jornadaId) {
         await this.recalcularEfectivoCobradoJornada(tx, pago.jornadaId);
+        await this.recalcularClientesVisitadosJornada(tx, pago.jornadaId, pago.prestamo.clienteId);
       }
     });
   }
@@ -103,6 +118,31 @@ export class PagoService {
     await tx.jornadaCobranza.update({
       where: { id: jornadaId },
       data: { efectivoCobrado },
+    });
+  }
+
+  /**
+   * JornadaCobranza.clientesVisitados/clientesPendientes se incrementan/decrementan
+   * desde el cliente al registrar el primer cobro del día a un cliente; si ese
+   * pago (el único del cliente en la jornada) se borra después, esos contadores
+   * quedaban desincronizados para siempre. Si el cliente ya no tiene ningún pago
+   * vigente en la jornada, se revierte el conteo.
+   */
+  async recalcularClientesVisitadosJornada(tx: any, jornadaId: string, clienteId: string): Promise<void> {
+    const otroPagoDelCliente = await tx.pago.findFirst({
+      where: { jornadaId, deletedAt: null, prestamo: { clienteId } },
+    });
+    if (otroPagoDelCliente) return;
+
+    const jornada = await tx.jornadaCobranza.findUnique({ where: { id: jornadaId } });
+    if (!jornada) return;
+
+    await tx.jornadaCobranza.update({
+      where: { id: jornadaId },
+      data: {
+        clientesVisitados: Math.max(0, jornada.clientesVisitados - 1),
+        clientesPendientes: jornada.clientesPendientes + 1,
+      },
     });
   }
 
@@ -242,10 +282,15 @@ export class PagoService {
       ? calcularCargoMora(cuotasPendientesParaMora, finanzas, Infinity)
       : 0;
 
+    // CANCELADO es un estado terminal manual (ej. refinanciación) distinto de
+    // LIQUIDADO; el préstamo conserva su historial de pagos, así que sin esta
+    // guarda, borrar cualquiera de esos pagos lo reactivaba a ACTIVO/LIQUIDADO.
+    const estado = prestamo.estado === 'CANCELADO' ? 'CANCELADO' : (liquidado ? 'LIQUIDADO' : 'ACTIVO');
+
     await tx.prestamo.update({
       where: { id: prestamoId },
       data: {
-        estado: liquidado ? 'LIQUIDADO' : 'ACTIVO',
+        estado,
         moraAcumulada: nuevaMoraAcumulada,
         moraFechaCalculo: new Date(),
       },
