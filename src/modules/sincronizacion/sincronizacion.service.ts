@@ -794,14 +794,25 @@ export class SincronizacionService {
         // diferencia del endpoint directo, no pasaba por checkRole — un
         // COBRADOR podía colar un borrado de pago vía sync sin que nada del
         // lado servidor lo rechazara.
+        //
+        // A diferencia de 'ruta_colaboradores' (que se ignora en silencio),
+        // aquí se lanza un error que revierte TODA la transacción del push:
+        // WatermelonDB no tiene ack por registro — si el push responde OK,
+        // el cliente marca como sincronizados TODOS los cambios que mandó,
+        // aunque el servidor haya descartado uno en silencio. Eso dejaría el
+        // dispositivo creyendo que borró el pago (con las cuotas/préstamo ya
+        // revertidos localmente) mientras el servidor conserva el pago intacto
+        // — una divergencia de dinero que ningún pull posterior corrige sola.
+        // Fallar todo el push es más disruptivo (bloquea también el resto de
+        // sus cambios pendientes hasta que se resuelva del lado servidor) pero
+        // nunca corrompe datos en silencio.
         if (table.name === 'pagos' && userRol !== 'ADMIN' && userRol !== 'SUPER_ADMIN' && userRol !== 'GERENTE') {
           const tc = changes[table.name];
           if (tc && tc.deleted.length > 0) {
-            logger.warn(
-              `⚠️  [SYNC PUSH] Se ignoraron ${tc.deleted.length} eliminaciones de 'pagos' (rol ${userRol} no puede eliminar pagos).`
+            throw new ForbiddenError(
+              `No tienes permisos para eliminar pagos (rol ${userRol}). Sincronización rechazada.`
             );
           }
-          continue;
         }
         const tableChanges = changes[table.name];
         if (tableChanges && tableChanges.deleted.length > 0) {
