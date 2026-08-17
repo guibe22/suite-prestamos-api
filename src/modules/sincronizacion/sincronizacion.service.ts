@@ -789,6 +789,20 @@ export class SincronizacionService {
           }
           continue;
         }
+        // Borrar un pago solo lo puede hacer ADMIN/SUPER_ADMIN/GERENTE (mismo
+        // rol list que el DELETE directo en pago.routes.ts). El push, a
+        // diferencia del endpoint directo, no pasaba por checkRole — un
+        // COBRADOR podía colar un borrado de pago vía sync sin que nada del
+        // lado servidor lo rechazara.
+        if (table.name === 'pagos' && userRol !== 'ADMIN' && userRol !== 'SUPER_ADMIN' && userRol !== 'GERENTE') {
+          const tc = changes[table.name];
+          if (tc && tc.deleted.length > 0) {
+            logger.warn(
+              `⚠️  [SYNC PUSH] Se ignoraron ${tc.deleted.length} eliminaciones de 'pagos' (rol ${userRol} no puede eliminar pagos).`
+            );
+          }
+          continue;
+        }
         const tableChanges = changes[table.name];
         if (tableChanges && tableChanges.deleted.length > 0) {
           const idsToDelete = tableChanges.deleted;
@@ -821,8 +835,15 @@ export class SincronizacionService {
             // (schema.prisma) existía desde antes; nadie escribía en él.
             let pagosPrevios: any[] = [];
             if (table.name === 'pagos') {
+              // `deletedAt: null` hace este bloque idempotente: un reintento
+              // de sync que reenvíe el mismo id ya borrado simplemente no
+              // matchea nada aquí, en vez de re-ejecutar recalcularPrestamo/
+              // recalcularEfectivoCobradoJornada/recalcularClientesVisitadosJornada
+              // una segunda vez (este último resta relativo al valor actual,
+              // no recalcula desde cero, así que una doble ejecución lo
+              // desangraba).
               pagosPrevios = await tx.pago.findMany({
-                where: { id: { in: idsToDelete }, ...orgScope },
+                where: { id: { in: idsToDelete }, deletedAt: null, ...orgScope },
                 include: { prestamo: { select: { clienteId: true } } },
               });
             }

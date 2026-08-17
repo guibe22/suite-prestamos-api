@@ -17,8 +17,12 @@ export class PagoService {
     // organización a través de este endpoint (el filtro de ruta solo existía
     // en el motor de sincronización, no aquí).
     const scopeRuta = esRolRestringidoPorRuta(actorRol) ? { ruta: rutaAccessFilter(actorId) } : {};
+    // deletedAt: null evita reprocesar un pago ya borrado (doble tap, retry de
+    // red tras un timeout): recalcularClientesVisitadosJornada resta relativo
+    // al valor actual, así que una segunda ejecución sobre el mismo pago lo
+    // desangraba en vez de ser un no-op.
     const pago = await prisma.pago.findFirst({
-      where: { id, prestamo: { cliente: { organizacionId, ...scopeRuta } } },
+      where: { id, deletedAt: null, prestamo: { cliente: { organizacionId, ...scopeRuta } } },
       include: { prestamo: { select: { clienteId: true } } },
     });
     if (!pago) {
