@@ -938,9 +938,24 @@ export class AdminOrganizacionService {
     organizacionId: string,
     prestamoId: string,
     payload: {
+      monto?: number;
+      tasaInteres?: number;
+      plazo?: number;
+      fechaInicio?: string | Date;
+      fechaVencimiento?: string | Date;
       estado?: string;
       moraAcumulada?: number;
-      cuotas?: Array<{ id: string; estado: 'PAGADA' | 'PENDIENTE'; montoPagado?: number }>;
+      cuotas?: Array<{
+        id?: string;
+        numeroCuota?: number;
+        montoPrincipal?: number;
+        montoInteres?: number;
+        montoTotal?: number;
+        fechaVencimiento?: string | Date;
+        estado?: 'PAGADA' | 'PENDIENTE' | 'VENCIDA';
+        montoPagado?: number;
+        deleted?: boolean;
+      }>;
       cuotasIniciales?: number;
     }
   ) {
@@ -959,33 +974,100 @@ export class AdminOrganizacionService {
         updateData.moraAcumulada = Math.max(0, payload.moraAcumulada);
         updateData.moraFechaCalculo = new Date();
       }
+      if (typeof payload.monto === 'number' && payload.monto > 0) {
+        updateData.monto = payload.monto;
+      }
+      if (typeof payload.tasaInteres === 'number' && payload.tasaInteres >= 0) {
+        updateData.tasaInteres = payload.tasaInteres;
+      }
+      if (typeof payload.plazo === 'number' && payload.plazo > 0) {
+        updateData.plazo = payload.plazo;
+      }
+      if (payload.fechaInicio) {
+        updateData.fechaInicio = new Date(payload.fechaInicio);
+      }
+      if (payload.fechaVencimiento) {
+        updateData.fechaVencimiento = new Date(payload.fechaVencimiento);
+      }
+
+      if (Array.isArray(payload.cuotas) && payload.cuotas.length > 0) {
+        for (const item of payload.cuotas) {
+          if (item.deleted && item.id) {
+            await tx.cuota.update({
+              where: { id: item.id },
+              data: { deletedAt: new Date(), updatedAt: new Date() },
+            });
+            continue;
+          }
+
+          const esPagada = item.estado === 'PAGADA';
+
+          if (item.id && !item.id.startsWith('temp-') && !item.id.startsWith('new-')) {
+            const cuotaDb = await tx.cuota.findUnique({ where: { id: item.id } });
+            if (cuotaDb && cuotaDb.prestamoId === prestamoId) {
+              const montoFinal = typeof item.montoPagado === 'number'
+                ? item.montoPagado
+                : (esPagada ? Number(item.montoTotal ?? cuotaDb.montoTotal) : 0);
+
+              const cuotaUpdate: any = {
+                updatedAt: new Date(),
+                estado: esPagada ? 'PAGADA' : 'PENDIENTE',
+                montoPagado: montoFinal,
+                fechaPago: esPagada ? (cuotaDb.fechaPago || item.fechaVencimiento || new Date()) : null,
+              };
+
+              if (typeof item.numeroCuota === 'number') cuotaUpdate.numeroCuota = item.numeroCuota;
+              if (typeof item.montoPrincipal === 'number') cuotaUpdate.montoPrincipal = item.montoPrincipal;
+              if (typeof item.montoInteres === 'number') cuotaUpdate.montoInteres = item.montoInteres;
+              if (typeof item.montoTotal === 'number') cuotaUpdate.montoTotal = item.montoTotal;
+              if (item.fechaVencimiento) cuotaUpdate.fechaVencimiento = new Date(item.fechaVencimiento);
+
+              await tx.cuota.update({
+                where: { id: item.id },
+                data: cuotaUpdate,
+              });
+            }
+          } else {
+            // Nueva cuota añadida
+            const totalMontoPrestamo = typeof payload.monto === 'number' ? payload.monto : Number(prestamo.monto);
+            const totalTasa = typeof payload.tasaInteres === 'number' ? payload.tasaInteres : Number(prestamo.tasaInteres);
+            const totalPlazo = typeof payload.plazo === 'number' ? payload.plazo : (payload.cuotas.length || prestamo.plazo);
+
+            const cuotaPrincipal = item.montoPrincipal ?? (totalMontoPrestamo / (totalPlazo || 1));
+            const cuotaInteres = item.montoInteres ?? ((totalMontoPrestamo * (totalTasa / 100)) / (totalPlazo || 1));
+            const cuotaTotal = item.montoTotal ?? (cuotaPrincipal + cuotaInteres);
+            const montoFinal = typeof item.montoPagado === 'number' ? item.montoPagado : (esPagada ? cuotaTotal : 0);
+
+            await tx.cuota.create({
+              data: {
+                prestamoId,
+                numeroCuota: item.numeroCuota || 1,
+                montoPrincipal: cuotaPrincipal,
+                montoInteres: cuotaInteres,
+                montoTotal: cuotaTotal,
+                montoPagado: montoFinal,
+                fechaVencimiento: item.fechaVencimiento ? new Date(item.fechaVencimiento) : new Date(),
+                fechaPago: esPagada ? new Date() : null,
+                estado: esPagada ? 'PAGADA' : 'PENDIENTE',
+              },
+            });
+          }
+        }
+
+        const cuotasActivas = await tx.cuota.findMany({
+          where: { prestamoId, deletedAt: null },
+          orderBy: { numeroCuota: 'asc' },
+        });
+        if (cuotasActivas.length > 0) {
+          updateData.plazo = cuotasActivas.length;
+          updateData.fechaVencimiento = cuotasActivas[cuotasActivas.length - 1].fechaVencimiento;
+        }
+      }
 
       await tx.prestamo.update({
         where: { id: prestamoId },
         data: updateData,
       });
-
-      if (Array.isArray(payload.cuotas) && payload.cuotas.length > 0) {
-        for (const item of payload.cuotas) {
-          const cuotaDb = await tx.cuota.findUnique({ where: { id: item.id } });
-          if (cuotaDb && cuotaDb.prestamoId === prestamoId) {
-            const esPagada = item.estado === 'PAGADA';
-            const montoFinal = typeof item.montoPagado === 'number'
-              ? item.montoPagado
-              : (esPagada ? Number(cuotaDb.montoTotal) : 0);
-
-            await tx.cuota.update({
-              where: { id: item.id },
-              data: {
-                estado: esPagada ? 'PAGADA' : 'PENDIENTE',
-                montoPagado: montoFinal,
-                fechaPago: esPagada ? (cuotaDb.fechaPago || cuotaDb.fechaVencimiento || new Date()) : null,
-                updatedAt: new Date(),
-              },
-            });
-          }
-        }
-      }
 
       const pagoService = new PagoService();
       if (typeof payload.cuotasIniciales === 'number') {
