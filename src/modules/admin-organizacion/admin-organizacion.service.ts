@@ -588,19 +588,39 @@ export class AdminOrganizacionService {
     if (tipoUpper === 'PAGO') {
       const pago = await prisma.pago.findFirst({
         where: { id: registroId, deletedAt: null, prestamo: { cliente: { organizacionId } } },
-        include: { prestamo: true },
+        include: { prestamo: { select: { clienteId: true, estado: true } } },
       });
       if (!pago) throw new NotFoundError('El pago no fue encontrado en esta organización.');
 
-      // Revertir estado del préstamo si estaba LIQUIDADO
-      if (pago.prestamo?.estado === 'LIQUIDADO') {
-        await prisma.prestamo.update({
-          where: { id: pago.prestamoId },
-          data: { estado: 'ACTIVO' },
-        });
-      }
+      // Mismo tratamiento que el DELETE directo (pago.service.ts) y que el
+      // borrado vía sync: antes este camino solo volteaba LIQUIDADO → ACTIVO y
+      // dejaba `cuotas.montoPagado` intacto (cuotas PAGADA con dinero que ya no
+      // existe), la mora vieja y el `efectivoCobrado` de la jornada inflado —
+      // y como no tocaba `cuotas.updatedAt`, ningún dispositivo recibía nunca
+      // la corrección: el pago desaparecía en el móvil pero el préstamo seguía
+      // viéndose pagado. `recalcularPrestamo` ya decide el estado correcto
+      // (incluido conservar CANCELADO), así que el volteo manual se elimina.
+      const pagoService = new PagoService();
+      await prisma.$transaction(async (tx: any) => {
+        await tx.pago.update({ where: { id: registroId }, data: softDelete });
 
-      await prisma.pago.update({ where: { id: registroId }, data: softDelete });
+        await tx.auditoria.create({
+          data: {
+            usuarioId: adminUserId,
+            accion: 'DELETE',
+            tabla: 'pagos',
+            registroId: pago.id,
+            valoresAnteriores: JSON.parse(JSON.stringify(pago)),
+          },
+        });
+
+        await pagoService.recalcularPrestamo(tx, pago.prestamoId, pago);
+        if (pago.jornadaId) {
+          await pagoService.recalcularEfectivoCobradoJornada(tx, pago.jornadaId);
+          await pagoService.recalcularClientesVisitadosJornada(tx, pago.jornadaId, pago.prestamo.clienteId);
+        }
+      });
+
       return { mensaje: 'Pago eliminado con éxito.' };
     }
 
@@ -610,11 +630,55 @@ export class AdminOrganizacionService {
       });
       if (!prestamo) throw new NotFoundError('El préstamo no fue encontrado en esta organización.');
 
-      await prisma.$transaction([
-        prisma.cuota.updateMany({ where: { prestamoId: registroId }, data: softDelete }),
-        prisma.pago.updateMany({ where: { prestamoId: registroId }, data: softDelete }),
-        prisma.prestamo.update({ where: { id: registroId }, data: softDelete }),
-      ]);
+      // Los pagos que se van a barrer con el préstamo se leen ANTES del
+      // soft-delete: cada uno pudo haber alimentado el cuadre de una jornada,
+      // y sin recalcular esas jornadas su `efectivoCobrado`/`clientesVisitados`
+      // quedaba inflado para siempre (mismo hueco que tenía el borrado de un
+      // pago suelto por este panel).
+      const pagosDelPrestamo = await prisma.pago.findMany({
+        where: { prestamoId: registroId, deletedAt: null },
+      });
+      const jornadasAfectadas = [
+        ...new Set(pagosDelPrestamo.map((pg) => pg.jornadaId).filter((id): id is string => !!id)),
+      ];
+
+      const pagoService = new PagoService();
+      await prisma.$transaction(async (tx: any) => {
+        await tx.cuota.updateMany({ where: { prestamoId: registroId, deletedAt: null }, data: softDelete });
+        await tx.pago.updateMany({ where: { prestamoId: registroId, deletedAt: null }, data: softDelete });
+        await tx.prestamo.update({ where: { id: registroId }, data: softDelete });
+
+        await tx.auditoria.create({
+          data: {
+            usuarioId: adminUserId,
+            accion: 'DELETE',
+            tabla: 'prestamos',
+            registroId: prestamo.id,
+            valoresAnteriores: JSON.parse(JSON.stringify(prestamo)),
+          },
+        });
+        if (pagosDelPrestamo.length > 0) {
+          await tx.auditoria.createMany({
+            data: pagosDelPrestamo.map((pg) => ({
+              usuarioId: adminUserId,
+              accion: 'DELETE',
+              tabla: 'pagos',
+              registroId: pg.id,
+              valoresAnteriores: JSON.parse(JSON.stringify(pg)),
+            })),
+          });
+        }
+
+        // El préstamo ya no existe, así que no se recalculan sus cuotas (se
+        // borraron con él); solo se corrigen los cuadres que sus pagos habían
+        // alimentado. `recalcularClientesVisitadosJornada` es no-op si el
+        // cliente todavía tiene otro pago vigente en esa jornada (otro préstamo).
+        for (const jornadaId of jornadasAfectadas) {
+          await pagoService.recalcularEfectivoCobradoJornada(tx, jornadaId);
+          await pagoService.recalcularClientesVisitadosJornada(tx, jornadaId, prestamo.clienteId);
+        }
+      });
+
       return { mensaje: 'Préstamo y sus registros asociados eliminados con éxito.' };
     }
 
