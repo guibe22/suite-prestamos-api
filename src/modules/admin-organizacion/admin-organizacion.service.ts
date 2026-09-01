@@ -1073,11 +1073,17 @@ export class AdminOrganizacionService {
                 ? item.montoPagado
                 : (esPagada ? Number(item.montoTotal ?? cuotaDb.montoTotal) : 0);
 
+              const fechaPagoFinal = esPagada
+                ? (cuotaDb.fechaPago
+                    ? new Date(cuotaDb.fechaPago)
+                    : (item.fechaVencimiento ? new Date(item.fechaVencimiento) : new Date()))
+                : null;
+
               const cuotaUpdate: any = {
                 updatedAt: new Date(),
                 estado: esPagada ? 'PAGADA' : 'PENDIENTE',
                 montoPagado: montoFinal,
-                fechaPago: esPagada ? (cuotaDb.fechaPago || item.fechaVencimiento || new Date()) : null,
+                fechaPago: fechaPagoFinal,
               };
 
               if (typeof item.numeroCuota === 'number') cuotaUpdate.numeroCuota = item.numeroCuota;
