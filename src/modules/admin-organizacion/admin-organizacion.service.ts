@@ -214,7 +214,8 @@ export class AdminOrganizacionService {
         fecha: p.fechaPago ? new Date(p.fechaPago).toISOString() : new Date().toISOString(),
         clienteNombre: p.prestamo?.cliente ? `${p.prestamo.cliente.nombres} ${p.prestamo.cliente.apellidos || ''}`.trim() : 'Desconocido',
         codigoPrestamo: p.prestamo?.codigo || p.prestamoId,
-        monto: Number(p.monto || 0),
+        monto: Number(p.monto || 0) + Number(p.moraCobrada || 0),
+        moraCobrada: Number(p.moraCobrada || 0),
         metodoPago: p.metodoPago || 'EFECTIVO',
         referencia: p.referencia || '—',
       }));
