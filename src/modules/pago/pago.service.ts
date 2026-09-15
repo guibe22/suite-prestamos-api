@@ -209,9 +209,13 @@ export class PagoService {
         cuotaIndex++;
         continue;
       }
-      const aplicar = Math.min(restanteInicial, pendiente);
+      let aplicar = Math.min(restanteInicial, pendiente);
       cuota.montoPagado += aplicar;
       restanteInicial -= aplicar;
+      if (restanteInicial > 0 && restanteInicial < 0.99) {
+        cuota.montoPagado += restanteInicial;
+        restanteInicial = 0;
+      }
       if (cuota.montoTotal - cuota.montoPagado <= 0.05) {
         cuotaIndex++;
       }
@@ -227,9 +231,13 @@ export class PagoService {
           cuotaIndex++;
           continue;
         }
-        const aplicar = Math.min(restante, pendiente);
+        let aplicar = Math.min(restante, pendiente);
         cuota.montoPagado += aplicar;
         restante -= aplicar;
+        if (restante > 0 && restante < 0.99) {
+          cuota.montoPagado += restante;
+          restante = 0;
+        }
         if (cuota.montoTotal - cuota.montoPagado <= 0.05) {
           cuotaIndex++;
         }
@@ -239,7 +247,7 @@ export class PagoService {
     // 'PAGADA'/'LIQUIDADO': escribir el valor usado por el app móvil
     const cuotasPorId = new Map<string, any>(cuotas.map((c: any) => [c.id, c]));
     for (const cuota of cuotasCalculadas) {
-      const pagada = cuota.montoTotal - cuota.montoPagado <= 0.05;
+      const pagada = cuota.montoTotal - cuota.montoPagado <= 0.99;
       const original = cuotasPorId.get(cuota.id);
       // Si la cuota ya estaba PAGADA antes de este recálculo y lo sigue estando,
       // se conserva su fechaPago original en vez de pisarla con la fecha de hoy
