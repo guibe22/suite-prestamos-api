@@ -282,9 +282,15 @@ export class PagoService {
         return fechaVencimiento ? { fechaVencimiento, montoTotal: c.montoTotal, montoPagado: c.montoPagado } : null;
       })
       .filter((c: any): c is { fechaVencimiento: Date; montoTotal: number; montoPagado: number } => !!c);
-    const nuevaMoraAcumulada = finanzas?.tasaMora
-      ? calcularCargoMora(cuotasPendientesParaMora, finanzas, Infinity)
-      : 0;
+    let nuevaMoraAcumulada: number;
+    const moraRevertida = Number(pagoEliminado?.moraCobrada || 0);
+    const moraActual = Number(prestamo.moraAcumulada || 0);
+
+    if (finanzas?.tasaMora && parseFloat(finanzas.tasaMora) > 0) {
+      nuevaMoraAcumulada = calcularCargoMora(cuotasPendientesParaMora, finanzas, Infinity);
+    } else {
+      nuevaMoraAcumulada = Math.max(0, moraActual + moraRevertida);
+    }
 
     // CANCELADO es un estado terminal manual (ej. refinanciación) distinto de
     // LIQUIDADO; el préstamo conserva su historial de pagos, así que sin esta
