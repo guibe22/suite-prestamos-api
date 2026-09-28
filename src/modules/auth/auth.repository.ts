@@ -82,7 +82,13 @@ export class AuthRepository {
   }
 
   async createUserWithNewOrganization(
-    data: RegisterInput & { passwordHash: string; rolId: string },
+    data: {
+      nombre: string;
+      email: string;
+      passwordHash?: string | null;
+      rolId: string;
+      organizacionNombre?: string;
+    },
   ) {
     return prisma.$transaction(async (tx) => {
       // 1. Crear Cuenta
@@ -107,12 +113,13 @@ export class AuthRepository {
         data: {
           nombre: data.nombre,
           email: data.email,
-          password: data.passwordHash,
+          password: data.passwordHash || null,
           rolId: data.rolId,
           organizacionId: organizacion.id,
         },
         include: {
           rol: true,
+          organizacion: true,
         },
       });
 

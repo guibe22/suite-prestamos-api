@@ -32,6 +32,15 @@ export class AuthController {
     }
   };
 
+  googleAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const result = await this.authService.googleAuth(req.body);
+      sendSuccess(res, 'Autenticación con Google exitosa.', result, undefined, 200);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   refresh = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const result = await this.authService.refresh(req.body.refreshToken);

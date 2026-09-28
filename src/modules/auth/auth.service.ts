@@ -26,7 +26,12 @@ export class AuthService {
     }
 
     if (!user.password) {
-      throw new UnauthorizedError('Debes aceptar la invitación enviada a tu correo antes de iniciar sesión.');
+      if (user.invitacionToken && !user.invitacionAceptadaEn) {
+        throw new UnauthorizedError('Debes aceptar la invitación enviada a tu correo antes de iniciar sesión.');
+      }
+      throw new UnauthorizedError(
+        'Esta cuenta fue registrada con Google. Inicia sesión con el botón de Google o usa "¿Olvidaste tu contraseña?" para crear una clave.'
+      );
     }
 
     const isPasswordValid = await comparePassword(data.password, user.password);
@@ -294,6 +299,117 @@ export class AuthService {
         refreshToken,
       },
     };
+  }
+
+  async googleAuth(data: { idToken?: string; accessToken?: string }): Promise<UserSessionResponse> {
+    const googleUser = await this.verificarTokenGoogle(data);
+    const cleanEmail = googleUser.email.toLowerCase().trim();
+
+    // 1. Buscar si el usuario ya existe en la base de datos (vincular automáticamente)
+    const existingUser = await this.authRepository.findByEmail(cleanEmail);
+
+    if (existingUser) {
+      if (existingUser.deletedAt) {
+        throw new UnauthorizedError('Tu cuenta ha sido desactivada.');
+      }
+      return this.toSessionResponse(existingUser);
+    }
+
+    // 2. Si no existe, crear nueva cuenta y organización con rol ADMIN
+    const rolNombre = 'ADMIN';
+    const rol = await this.authRepository.findRoleByName(rolNombre);
+    if (!rol) {
+      throw new BadRequestError(`El rol '${rolNombre}' no es válido.`);
+    }
+
+    const { usuario, organizacion } = await this.authRepository.createUserWithNewOrganization({
+      nombre: googleUser.name,
+      email: cleanEmail,
+      passwordHash: null,
+      rolId: rol.id,
+      organizacionNombre: `Organización de ${googleUser.name}`,
+    });
+
+    const tokenPayload = {
+      id: usuario.id,
+      email: usuario.email,
+      rol: usuario.rol.nombre,
+      organizacionId: usuario.organizacionId || undefined,
+    };
+
+    const accessToken = generateAccessToken(tokenPayload);
+    const refreshToken = generateRefreshToken(tokenPayload);
+
+    return {
+      id: usuario.id,
+      nombre: usuario.nombre,
+      email: usuario.email,
+      rol: usuario.rol.nombre,
+      organizacionId: usuario.organizacionId,
+      organizacionConfigurada: false,
+      organizacion: this.toOrganizacionSessionInfo(organizacion),
+      tokens: {
+        accessToken,
+        refreshToken,
+      },
+    };
+  }
+
+  private async verificarTokenGoogle(params: { idToken?: string; accessToken?: string }): Promise<{
+    email: string;
+    name: string;
+    sub: string;
+    picture?: string;
+  }> {
+    if (params.idToken) {
+      try {
+        const res = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(params.idToken)}`);
+        if (!res.ok) {
+          throw new UnauthorizedError('Token de Google inválido o expirado.');
+        }
+        const data = (await res.json()) as any;
+        if (!data.email || !(data.email_verified === 'true' || data.email_verified === true)) {
+          throw new UnauthorizedError('El correo de Google no está verificado.');
+        }
+        return {
+          email: data.email,
+          name: data.name || data.given_name || 'Usuario',
+          sub: data.sub,
+          picture: data.picture,
+        };
+      } catch (err: any) {
+        if (err instanceof UnauthorizedError) throw err;
+        logger.error({ err }, 'Error validando idToken de Google');
+        throw new UnauthorizedError('No se pudo verificar el token de Google.');
+      }
+    }
+
+    if (params.accessToken) {
+      try {
+        const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+          headers: { Authorization: `Bearer ${params.accessToken}` },
+        });
+        if (!res.ok) {
+          throw new UnauthorizedError('Token de acceso de Google inválido o expirado.');
+        }
+        const data = (await res.json()) as any;
+        if (!data.email || !(data.email_verified === 'true' || data.email_verified === true)) {
+          throw new UnauthorizedError('El correo de Google no está verificado.');
+        }
+        return {
+          email: data.email,
+          name: data.name || data.given_name || 'Usuario',
+          sub: data.sub,
+          picture: data.picture,
+        };
+      } catch (err: any) {
+        if (err instanceof UnauthorizedError) throw err;
+        logger.error({ err }, 'Error validando accessToken de Google');
+        throw new UnauthorizedError('No se pudo verificar el token de acceso de Google.');
+      }
+    }
+
+    throw new BadRequestError('Debes proporcionar idToken o accessToken de Google.');
   }
 
   async refresh(token: string): Promise<{ accessToken: string; refreshToken: string }> {

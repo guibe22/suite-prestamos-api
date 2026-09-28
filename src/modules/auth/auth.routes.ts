@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { AuthController } from './auth.controller.js';
 import { validate } from '../../middlewares/validate.middleware.js';
-import { loginSchema, registerSchema, refreshSchema, sendCodeSchema, changePasswordSchema, configureOrganizationSchema, resetPasswordSchema, aceptarInvitacionSchema, eliminarCuentaSchema } from './auth.schema.js';
+import { loginSchema, registerSchema, refreshSchema, sendCodeSchema, changePasswordSchema, configureOrganizationSchema, resetPasswordSchema, aceptarInvitacionSchema, eliminarCuentaSchema, googleAuthSchema } from './auth.schema.js';
 import { authMiddleware } from '../../middlewares/auth.middleware.js';
 import { checkRole } from '../../middlewares/permissions.middleware.js';
 
@@ -88,6 +88,7 @@ router.post('/aceptar-invitacion', validate({ body: aceptarInvitacionSchema }), 
  *         description: Credenciales correctas, se retornan tokens
  */
 router.post('/login', validate({ body: loginSchema }), controller.login);
+router.post('/google', validate({ body: googleAuthSchema }), controller.googleAuth);
 
 /**
  * @swagger

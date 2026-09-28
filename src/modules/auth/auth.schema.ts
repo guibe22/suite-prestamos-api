@@ -57,3 +57,8 @@ export const eliminarCuentaSchema = z.object({
   password: z.string().min(1, 'Debes confirmar tu contraseña actual.'),
 });
 
+export const googleAuthSchema = z.object({
+  idToken: z.string().min(1).optional(),
+  accessToken: z.string().min(1).optional(),
+});
+
