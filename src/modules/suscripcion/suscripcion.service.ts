@@ -218,6 +218,9 @@ export class SuscripcionService {
 
     let suscripcion = await prisma.suscripcion.findUnique({ where: { organizacionId } });
     if (!suscripcion) {
+      if (!config.suscripcionesEnforcementEnabled) {
+        return { nivel: 'ACTIVO', diasRestantesGracia: null, diasRestantesGraciaManual: null, ...contacto };
+      }
       return { nivel: 'BLOQUEADO', diasRestantesGracia: null, diasRestantesGraciaManual: null, ...contacto };
     }
 
@@ -227,6 +230,12 @@ export class SuscripcionService {
     // esperar a la próxima corrida de las 3:30am.
     const { suscripcion: actualizada, diasRestantesGraciaManual } = await this.evaluarYAplicarVencimientoManual(suscripcion);
     suscripcion = actualizada;
+
+    // Si el enforcement global está desactivado (false), el sistema opera en modo
+    // libre sin bloquear a ninguna organización en la app móvil.
+    if (!config.suscripcionesEnforcementEnabled) {
+      return { nivel: 'ACTIVO', diasRestantesGracia: null, diasRestantesGraciaManual, ...contacto };
+    }
 
     const activa =
       suscripcion.estado === 'ACTIVA' ||

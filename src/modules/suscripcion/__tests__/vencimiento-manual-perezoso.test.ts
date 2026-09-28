@@ -42,6 +42,7 @@ describe('SuscripcionService.obtenerNivelAcceso — vencimiento manual perezoso'
       soporteTelefono: null,
       soporteEmail: null,
       suscripcionGraciaDias: 7,
+      suscripcionesEnforcementEnabled: true,
     });
   });
 
@@ -106,5 +107,24 @@ describe('SuscripcionService.obtenerNivelAcceso — vencimiento manual perezoso'
     expect(mockPrisma.suscripcion.update).not.toHaveBeenCalled();
     expect(resultado.nivel).toBe('ACTIVO');
     expect(resultado.diasRestantesGraciaManual).toBe(2);
+  });
+
+  it('si suscripcionesEnforcementEnabled es false, devuelve siempre nivel ACTIVO', async () => {
+    mockPrisma.configuracionSistema.upsert.mockResolvedValue({
+      soporteTelefono: null,
+      soporteEmail: null,
+      suscripcionGraciaDias: 7,
+      suscripcionesEnforcementEnabled: false,
+    });
+
+    const sub = suscripcionManual({
+      diasGraciaSuspension: 0,
+      periodoFinEn: new Date(Date.now() - 30 * DIA_MS),
+    });
+    mockPrisma.suscripcion.findUnique.mockResolvedValue(sub);
+    mockPrisma.suscripcion.update.mockImplementation(({ data }) => Promise.resolve({ ...sub, ...data }));
+
+    const resultado = await service.obtenerNivelAcceso('org-1');
+    expect(resultado.nivel).toBe('ACTIVO');
   });
 });
