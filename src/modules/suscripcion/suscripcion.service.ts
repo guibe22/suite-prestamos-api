@@ -337,7 +337,10 @@ export class SuscripcionService {
           : null;
 
         const periodoFinEn = fechaDesdeMs(evento.expiration_at_ms);
-        const base = plan ? { planId: plan.id } : {};
+        const base = {
+          ...(plan ? { planId: plan.id } : {}),
+          proveedor: 'REVENUE_CAT' as const,
+        };
 
         switch (evento.type) {
           case 'INITIAL_PURCHASE':
