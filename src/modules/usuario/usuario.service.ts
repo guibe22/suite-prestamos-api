@@ -59,7 +59,7 @@ export class UsuarioService {
    */
   async reenviarInvitacion(organizacionId: string, id: string): Promise<MiembroEquipoResponse> {
     const usuario = await this.buscarMiembroAdministrable(organizacionId, id);
-    if (usuario.password) {
+    if (usuario.password || usuario.invitacionAceptadaEn) {
       throw new BadRequestError('Este miembro ya aceptó la invitación; usa "Restablecer contraseña" en su lugar.');
     }
 
@@ -84,7 +84,7 @@ export class UsuarioService {
       html: `
         <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px; border: 1px solid #f0f0f0; border-radius: 16px; background-color: #ffffff;">
           <h2 style="color: #059669; font-size: 22px; margin-bottom: 8px;">Te invitaron a un equipo</h2>
-          <p style="color: #4b5563; font-size: 15px; line-height: 24px;">Hola ${nombre}, te agregaron a un equipo en <strong>Suite Préstamos</strong>. Abre la app, elige "¿Tienes una invitación?" e ingresa este código junto con tu correo para fijar tu propia contraseña y aceptar:</p>
+          <p style="color: #4b5563; font-size: 15px; line-height: 24px;">Hola ${nombre}, te agregaron a un equipo en <strong>Suite Préstamos</strong>. Abre la app y presiona <strong>"Continuar con Google"</strong> con este correo, o elige <strong>"¿Tienes una invitación?"</strong> e ingresa este código para fijar tu contraseña:</p>
           <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 16px; text-align: center; margin: 24px 0;">
             <span style="font-size: 26px; font-weight: 700; letter-spacing: 3px; color: #059669; font-family: monospace;">${codigo}</span>
           </div>
@@ -125,7 +125,7 @@ export class UsuarioService {
 
   async restablecerPassword(organizacionId: string, id: string): Promise<{ passwordTemporal: string }> {
     const usuario = await this.buscarMiembroAdministrable(organizacionId, id);
-    if (!usuario.password) {
+    if (!usuario.password && !usuario.invitacionAceptadaEn) {
       throw new BadRequestError('Este miembro aún no acepta su invitación; usa "Reenviar invitación" en su lugar.');
     }
 
@@ -170,16 +170,21 @@ export class UsuarioService {
     email: string;
     rol: { nombre: string };
     password: string | null;
+    invitacionToken?: string | null;
+    invitacionAceptadaEn?: Date | null;
     deletedAt: Date | null;
     createdAt: Date;
   }): MiembroEquipoResponse {
+    const invitacionPendiente =
+      Boolean(usuario.invitacionToken) && usuario.invitacionAceptadaEn === null;
+
     return {
       id: usuario.id,
       nombre: usuario.nombre,
       email: usuario.email,
       rol: usuario.rol.nombre,
       activo: usuario.deletedAt === null,
-      invitacionPendiente: usuario.password === null,
+      invitacionPendiente,
       createdAt: usuario.createdAt,
     };
   }

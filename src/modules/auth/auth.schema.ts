@@ -60,5 +60,6 @@ export const eliminarCuentaSchema = z.object({
 export const googleAuthSchema = z.object({
   idToken: z.string().min(1).optional(),
   accessToken: z.string().min(1).optional(),
+  invitacionToken: z.string().min(1).optional(),
 });
 

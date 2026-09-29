@@ -301,17 +301,56 @@ export class AuthService {
     };
   }
 
-  async googleAuth(data: { idToken?: string; accessToken?: string }): Promise<UserSessionResponse> {
+  async googleAuth(data: { idToken?: string; accessToken?: string; invitacionToken?: string }): Promise<UserSessionResponse> {
     const googleUser = await this.verificarTokenGoogle(data);
     const cleanEmail = googleUser.email.toLowerCase().trim();
 
-    // 1. Buscar si el usuario ya existe en la base de datos (vincular automáticamente)
+    // 1. Si se proporciona explícitamente un código de invitación
+    if (data.invitacionToken) {
+      const invitedUser = await this.authRepository.findByInvitacionToken(data.invitacionToken.trim());
+      if (!invitedUser) {
+        throw new BadRequestError('El código de invitación no es válido.');
+      }
+      if (invitedUser.invitacionAceptadaEn) {
+        throw new BadRequestError('Esta invitación ya fue aceptada.');
+      }
+      if (invitedUser.invitacionExpiraEn && invitedUser.invitacionExpiraEn.getTime() < Date.now()) {
+        throw new BadRequestError('La invitación ha expirado. Pide a tu administrador que la reenvíe.');
+      }
+
+      // Si el correo de Google es diferente al correo que ingresó el administrador
+      if (invitedUser.email !== cleanEmail) {
+        const conflictUser = await this.authRepository.findByEmail(cleanEmail);
+        if (conflictUser && conflictUser.id !== invitedUser.id) {
+          throw new ConflictError('Ya existe una cuenta registrada con este correo de Google.');
+        }
+        await prisma.usuario.update({
+          where: { id: invitedUser.id },
+          data: { email: cleanEmail },
+        });
+      }
+
+      const actualizado = await this.authRepository.aceptarInvitacionConGoogle(invitedUser.id);
+      return this.toSessionResponse(actualizado);
+    }
+
+    // 2. Buscar si el usuario ya existe en la base de datos (vincular automáticamente)
     const existingUser = await this.authRepository.findByEmail(cleanEmail);
 
     if (existingUser) {
       if (existingUser.deletedAt) {
         throw new UnauthorizedError('Tu cuenta ha sido desactivada.');
       }
+
+      // Si el usuario tenía una invitación de equipo pendiente, auto-aceptarla con Google
+      if (existingUser.invitacionToken && !existingUser.invitacionAceptadaEn) {
+        if (existingUser.invitacionExpiraEn && existingUser.invitacionExpiraEn.getTime() < Date.now()) {
+          throw new BadRequestError('Tu invitación ha expirado. Pide a tu administrador que la reenvíe.');
+        }
+        const actualizado = await this.authRepository.aceptarInvitacionConGoogle(existingUser.id);
+        return this.toSessionResponse(actualizado);
+      }
+
       return this.toSessionResponse(existingUser);
     }
 

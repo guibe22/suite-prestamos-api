@@ -50,6 +50,18 @@ export class AuthRepository {
     });
   }
 
+  async aceptarInvitacionConGoogle(id: string) {
+    return prisma.usuario.update({
+      where: { id },
+      data: {
+        invitacionToken: null,
+        invitacionExpiraEn: null,
+        invitacionAceptadaEn: new Date(),
+      },
+      include: { rol: true, organizacion: true },
+    });
+  }
+
   async findRoleByName(nombre: string) {
     return prisma.rol.findUnique({
       where: { nombre },

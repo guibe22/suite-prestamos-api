@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockPrisma = {
-  usuario: { findUnique: vi.fn(), create: vi.fn() },
+  usuario: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
   cuenta: { create: vi.fn() },
   organizacion: { create: vi.fn() },
   rol: { findUnique: vi.fn() },
@@ -68,6 +68,95 @@ describe('AuthService.googleAuth', () => {
     // No se llamó a crear nuevo usuario ni organización
     expect(mockPrisma.usuario.create).not.toHaveBeenCalled();
     expect(mockPrisma.organizacion.create).not.toHaveBeenCalled();
+  });
+
+  it('auto-acepta la invitación de equipo pendiente al iniciar sesión con Google con el mismo correo', async () => {
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        email: 'cobrador@gmail.com',
+        email_verified: true,
+        name: 'Cobrador Juan',
+        sub: 'google-sub-789',
+      }),
+    });
+
+    const usuarioInvitado = {
+      id: 'usr-invitado',
+      nombre: 'Cobrador Juan',
+      email: 'cobrador@gmail.com',
+      password: null,
+      rol: { nombre: 'COBRADOR' },
+      organizacionId: 'org-prestamos-1',
+      invitacionToken: 'TOKEN123',
+      invitacionExpiraEn: new Date(Date.now() + 1000000),
+      invitacionAceptadaEn: null,
+      organizacion: {
+        id: 'org-prestamos-1',
+        nombre: 'Financiera Los Socios',
+        identificacionTributaria: null,
+        direccion: null,
+        telefono: null,
+        configuracion: { moneda: 'DOP' },
+      },
+      deletedAt: null,
+    };
+
+    const usuarioActualizado = {
+      ...usuarioInvitado,
+      invitacionToken: null,
+      invitacionExpiraEn: null,
+      invitacionAceptadaEn: new Date(),
+    };
+
+    mockPrisma.usuario.findUnique.mockResolvedValueOnce(usuarioInvitado);
+    mockPrisma.usuario.update.mockResolvedValueOnce(usuarioActualizado);
+
+    const session = await service.googleAuth({ idToken: 'valid-token' });
+
+    expect(session.id).toBe('usr-invitado');
+    expect(session.rol).toBe('COBRADOR');
+    expect(session.organizacionId).toBe('org-prestamos-1');
+    expect(mockPrisma.usuario.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'usr-invitado' },
+        data: expect.objectContaining({
+          invitacionToken: null,
+          invitacionExpiraEn: null,
+        }),
+      })
+    );
+  });
+
+  it('rechaza con error si la invitación pendiente ha expirado', async () => {
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        email: 'vencido@gmail.com',
+        email_verified: true,
+        name: 'Cobrador Vencido',
+        sub: 'google-sub-expired',
+      }),
+    });
+
+    const usuarioExpirado = {
+      id: 'usr-expirado',
+      nombre: 'Cobrador Vencido',
+      email: 'vencido@gmail.com',
+      password: null,
+      rol: { nombre: 'COBRADOR' },
+      organizacionId: 'org-prestamos-1',
+      invitacionToken: 'TOKEN_EXP',
+      invitacionExpiraEn: new Date(Date.now() - 5000), // Expirado en el pasado
+      invitacionAceptadaEn: null,
+      deletedAt: null,
+    };
+
+    mockPrisma.usuario.findUnique.mockResolvedValueOnce(usuarioExpirado);
+
+    await expect(
+      service.googleAuth({ idToken: 'valid-token' })
+    ).rejects.toThrow(/invitación ha expirado/i);
   });
 
   it('crea usuario nuevo con password nulo y trial automático si no existía previamente', async () => {
