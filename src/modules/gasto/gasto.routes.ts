@@ -3,7 +3,7 @@ import { GastoController } from './gasto.controller.js';
 import { validate } from '../../middlewares/validate.middleware.js';
 import { idParamSchema } from './gasto.schema.js';
 import { authMiddleware } from '../../middlewares/auth.middleware.js';
-import { checkRole } from '../../middlewares/permissions.middleware.js';
+import { checkPermission } from '../../middlewares/permissions.middleware.js';
 
 const router = Router();
 const controller = new GastoController();
@@ -29,7 +29,7 @@ const controller = new GastoController();
 router.delete(
   '/:id',
   authMiddleware,
-  checkRole(['ADMIN', 'SUPER_ADMIN', 'GERENTE']),
+  checkPermission('gastos:eliminar'),
   validate({ params: idParamSchema }),
   controller.eliminar
 );

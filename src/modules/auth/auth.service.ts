@@ -10,6 +10,7 @@ import {
   ConflictError,
   UnauthorizedError,
 } from '../../shared/errors/custom.error.js';
+import { resolverPermisosUsuario } from '../../shared/constants/permissions.constants.js';
 import type { LoginInput, OrganizacionSessionInfo, RegisterInput, UserSessionResponse } from './auth.types.js';
 
 const verificationCodes = new Map<string, { code: string; expiresAt: number }>();
@@ -72,6 +73,7 @@ export class AuthService {
     nombre: string;
     email: string;
     rol: { nombre: string };
+    permisos?: string[];
     organizacionId: string | null;
     organizacion: {
       id: string;
@@ -82,10 +84,13 @@ export class AuthService {
       configuracion: unknown;
     } | null;
   }): UserSessionResponse {
+    const permisos = resolverPermisosUsuario(user.rol.nombre, user.permisos);
+
     const tokenPayload = {
       id: user.id,
       email: user.email,
       rol: user.rol.nombre,
+      permisos,
       organizacionId: user.organizacionId || undefined,
     };
 
@@ -97,6 +102,7 @@ export class AuthService {
       nombre: user.nombre,
       email: user.email,
       rol: user.rol.nombre,
+      permisos,
       organizacionId: user.organizacionId,
       organizacionConfigurada: user.organizacion ? user.organizacion.configuracion !== null : false,
       organizacion: this.toOrganizacionSessionInfo(user.organizacion),
@@ -275,10 +281,13 @@ export class AuthService {
       rolId: rol.id,
     });
 
+    const permisos = resolverPermisosUsuario(usuario.rol.nombre, (usuario as any).permisos);
+
     const tokenPayload = {
       id: usuario.id,
       email: usuario.email,
       rol: usuario.rol.nombre,
+      permisos,
       organizacionId: usuario.organizacionId || undefined,
     };
 
@@ -290,6 +299,7 @@ export class AuthService {
       nombre: usuario.nombre,
       email: usuario.email,
       rol: usuario.rol.nombre,
+      permisos,
       organizacionId: usuario.organizacionId,
       // Una organización recién creada aún no tiene configuración.
       organizacionConfigurada: false,
@@ -369,10 +379,13 @@ export class AuthService {
       organizacionNombre: `Organización de ${googleUser.name}`,
     });
 
+    const permisos = resolverPermisosUsuario(usuario.rol.nombre, (usuario as any).permisos);
+
     const tokenPayload = {
       id: usuario.id,
       email: usuario.email,
       rol: usuario.rol.nombre,
+      permisos,
       organizacionId: usuario.organizacionId || undefined,
     };
 
@@ -384,6 +397,7 @@ export class AuthService {
       nombre: usuario.nombre,
       email: usuario.email,
       rol: usuario.rol.nombre,
+      permisos,
       organizacionId: usuario.organizacionId,
       organizacionConfigurada: false,
       organizacion: this.toOrganizacionSessionInfo(organizacion),
@@ -485,11 +499,14 @@ export class AuthService {
       throw new UnauthorizedError('Usuario no encontrado.');
     }
 
+    const permisos = resolverPermisosUsuario(user.rol.nombre, user.permisos);
+
     return {
       id: user.id,
       nombre: user.nombre,
       email: user.email,
       rol: user.rol.nombre,
+      permisos,
       organizacionConfigurada: user.organizacion ? user.organizacion.configuracion !== null : false,
       organizacion: user.organizacion
         ? {

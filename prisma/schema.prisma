@@ -277,6 +277,7 @@ model Usuario {
   password         String?
   rolId            String
   rol              Rol               @relation(fields: [rolId], references: [id])
+  permisos         String[]          @default([])
   organizacionId   String?
   organizacion     Organizacion?     @relation(fields: [organizacionId], references: [id])
   rutas            Ruta[]

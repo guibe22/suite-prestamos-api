@@ -4,6 +4,7 @@ import { SuscripcionService } from '../suscripcion/suscripcion.service.js';
 import { PagoService } from '../pago/pago.service.js';
 import { GastoService } from '../gasto/gasto.service.js';
 import { ForbiddenError } from '../../shared/errors/custom.error.js';
+import { resolverPermisosUsuario } from '../../shared/constants/permissions.constants.js';
 import type { PullResponse, WatermelonChanges } from './sincronizacion.types.js';
 
 export class SincronizacionService {
@@ -669,7 +670,13 @@ export class SincronizacionService {
   /**
    * Push: Aplica los cambios enviados por el cliente al servidor en una sola transaccion
    */
-  async push(changes: WatermelonChanges, organizacionId: string, userId: string, userRol: string): Promise<void> {
+  async push(
+    changes: WatermelonChanges,
+    organizacionId: string,
+    userId: string,
+    userRol: string,
+    userPermisos?: string[]
+  ): Promise<void> {
     // Resumen de lo que el cliente quiere subir, ANTES de aplicarlo
     let entrantesCreated = 0;
     let entrantesUpdated = 0;
@@ -806,11 +813,26 @@ export class SincronizacionService {
         // Fallar todo el push es más disruptivo (bloquea también el resto de
         // sus cambios pendientes hasta que se resuelva del lado servidor) pero
         // nunca corrompe datos en silencio.
-        if (table.name === 'pagos' && userRol !== 'ADMIN' && userRol !== 'SUPER_ADMIN' && userRol !== 'GERENTE') {
+        const permisosEfectivos = resolverPermisosUsuario(userRol, userPermisos);
+        const puedeEliminarPagos =
+          userRol === 'ADMIN' || userRol === 'SUPER_ADMIN' || permisosEfectivos.includes('pagos:eliminar');
+        const puedeEliminarGastos =
+          userRol === 'ADMIN' || userRol === 'SUPER_ADMIN' || permisosEfectivos.includes('gastos:eliminar');
+
+        if (table.name === 'pagos' && !puedeEliminarPagos) {
           const tc = changes[table.name];
           if (tc && tc.deleted.length > 0) {
             throw new ForbiddenError(
-              `No tienes permisos para eliminar pagos (rol ${userRol}). Sincronización rechazada.`
+              `No tienes permisos para eliminar pagos. Sincronización rechazada.`
+            );
+          }
+        }
+
+        if (table.name === 'gastos' && !puedeEliminarGastos) {
+          const tc = changes[table.name];
+          if (tc && tc.deleted.length > 0) {
+            throw new ForbiddenError(
+              `No tienes permisos para eliminar gastos. Sincronización rechazada.`
             );
           }
         }

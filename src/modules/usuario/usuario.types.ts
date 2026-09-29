@@ -10,6 +10,7 @@ export interface MiembroEquipoResponse {
   nombre: string;
   email: string;
   rol: string;
+  permisos: string[];
   activo: boolean;
   invitacionPendiente: boolean;
   createdAt: Date;

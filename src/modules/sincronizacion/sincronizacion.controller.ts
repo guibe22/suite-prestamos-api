@@ -46,7 +46,7 @@ export class SincronizacionController {
         throw new BadRequestError('No se proporcionaron cambios para sincronizar.');
       }
 
-      await this.sincronizacionService.push(changes, organizacionId, userId, userRol);
+      await this.sincronizacionService.push(changes, organizacionId, userId, userRol, req.user?.permisos);
 
       // Responder con estado 200 (sin contenido) o 204 como lo espera WatermelonDB
       res.status(204).send();

@@ -40,6 +40,7 @@ export class UsuarioRepository {
     organizacionId: string;
     invitacionToken: string;
     invitacionExpiraEn: Date;
+    permisos?: string[];
   }) {
     return prisma.usuario.create({
       data,
@@ -55,7 +56,7 @@ export class UsuarioRepository {
     });
   }
 
-  async update(id: string, data: { nombre?: string; rolId?: string; deletedAt?: Date | null; deletedBy?: string | null }) {
+  async update(id: string, data: { nombre?: string; rolId?: string; permisos?: string[]; deletedAt?: Date | null; deletedBy?: string | null }) {
     return prisma.usuario.update({
       where: { id },
       data,

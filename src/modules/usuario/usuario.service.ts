@@ -4,6 +4,7 @@ import { hashPassword } from '../../utils/bcrypt.js';
 import { sendEmail } from '../../shared/email/email.service.js';
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '../../shared/errors/custom.error.js';
 import { SuscripcionService } from '../suscripcion/suscripcion.service.js';
+import { resolverPermisosUsuario } from '../../shared/constants/permissions.constants.js';
 import type { ActualizarUsuarioInput, CrearUsuarioInput, MiembroEquipoResponse } from './usuario.types.js';
 
 const ROLES_ADMINISTRABLES = ['COBRADOR', 'CAJERO', 'GERENTE'];
@@ -35,6 +36,7 @@ export class UsuarioService {
     await this.suscripcionService.verificarLimite(organizacionId, 'usuarios', 1);
 
     const rol = await this.buscarOCrearRol(data.rol);
+    const permisos = data.permisos ?? resolverPermisosUsuario(data.rol, null);
     const invitacionToken = this.generarCodigoInvitacion();
     const invitacionExpiraEn = new Date(Date.now() + INVITACION_VIGENCIA_MS);
 
@@ -42,6 +44,7 @@ export class UsuarioService {
       nombre: data.nombre,
       email: cleanEmail,
       rolId: rol.id,
+      permisos,
       organizacionId,
       invitacionToken,
       invitacionExpiraEn,
@@ -97,13 +100,19 @@ export class UsuarioService {
   }
 
   async actualizar(organizacionId: string, id: string, actorId: string, data: ActualizarUsuarioInput): Promise<MiembroEquipoResponse> {
-    if (data.nombre === undefined && data.rol === undefined && data.activo === undefined) {
+    if (data.nombre === undefined && data.rol === undefined && data.permisos === undefined && data.activo === undefined) {
       throw new BadRequestError('Debes enviar al menos un campo para actualizar.');
     }
 
     const usuario = await this.buscarMiembroAdministrable(organizacionId, id);
 
-    const cambios: { nombre?: string; rolId?: string; deletedAt?: Date | null; deletedBy?: string | null } = {};
+    const cambios: {
+      nombre?: string;
+      rolId?: string;
+      permisos?: string[];
+      deletedAt?: Date | null;
+      deletedBy?: string | null;
+    } = {};
 
     if (data.nombre !== undefined) {
       cambios.nombre = data.nombre;
@@ -112,6 +121,10 @@ export class UsuarioService {
     if (data.rol !== undefined) {
       const rol = await this.buscarOCrearRol(data.rol);
       cambios.rolId = rol.id;
+    }
+
+    if (data.permisos !== undefined) {
+      cambios.permisos = data.permisos;
     }
 
     if (data.activo !== undefined) {
@@ -152,8 +165,8 @@ export class UsuarioService {
     if (!usuario) {
       throw new NotFoundError('El miembro del equipo no existe en tu organización.');
     }
-    if (!ROLES_ADMINISTRABLES.includes(usuario.rol.nombre)) {
-      throw new ForbiddenError('No puedes administrar este usuario desde aquí.');
+    if (usuario.rol.nombre === 'ADMIN' || usuario.rol.nombre === 'SUPER_ADMIN') {
+      throw new ForbiddenError('No puedes administrar a un administrador desde aquí.');
     }
     return usuario;
   }
@@ -169,6 +182,7 @@ export class UsuarioService {
     nombre: string;
     email: string;
     rol: { nombre: string };
+    permisos?: string[];
     password: string | null;
     invitacionToken?: string | null;
     invitacionAceptadaEn?: Date | null;
@@ -183,6 +197,7 @@ export class UsuarioService {
       nombre: usuario.nombre,
       email: usuario.email,
       rol: usuario.rol.nombre,
+      permisos: resolverPermisosUsuario(usuario.rol.nombre, usuario.permisos),
       activo: usuario.deletedAt === null,
       invitacionPendiente,
       createdAt: usuario.createdAt,

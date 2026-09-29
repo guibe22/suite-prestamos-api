@@ -3,7 +3,7 @@ import { PagoController } from './pago.controller.js';
 import { validate } from '../../middlewares/validate.middleware.js';
 import { idParamSchema } from './pago.schema.js';
 import { authMiddleware } from '../../middlewares/auth.middleware.js';
-import { checkRole } from '../../middlewares/permissions.middleware.js';
+import { checkPermission } from '../../middlewares/permissions.middleware.js';
 
 const router = Router();
 const controller = new PagoController();
@@ -29,7 +29,7 @@ const controller = new PagoController();
 router.delete(
   '/:id',
   authMiddleware,
-  checkRole(['ADMIN', 'SUPER_ADMIN', 'GERENTE']),
+  checkPermission('pagos:eliminar'),
   validate({ params: idParamSchema }),
   controller.eliminar
 );
@@ -37,7 +37,7 @@ router.delete(
 router.post(
   '/recalcular-prestamo/:prestamoId',
   authMiddleware,
-  checkRole(['ADMIN', 'SUPER_ADMIN', 'GERENTE']),
+  checkPermission('pagos:eliminar'),
   controller.recalcularPrestamoAdmin
 );
 

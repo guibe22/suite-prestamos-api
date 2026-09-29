@@ -23,6 +23,7 @@ export interface UserSessionResponse {
   nombre: string;
   email: string;
   rol: string;
+  permisos: string[];
   organizacionId?: string | null;
   organizacionConfigurada: boolean;
   organizacion: OrganizacionSessionInfo | null;
