@@ -117,7 +117,11 @@ export class SuscripcionService {
         nombre: suscripcion.plan.nombre,
         precioMensual: Number(suscripcion.plan.precioMensual),
         moneda: suscripcion.plan.moneda,
-        limites: suscripcion.plan.limites,
+        limites: (() => {
+          const planLimites = (suscripcion.plan.limites as Record<string, unknown>) ?? {};
+          const customLimites = (suscripcion.limitesPersonalizados as Record<string, unknown>) ?? null;
+          return customLimites ? { ...planLimites, ...customLimites } : planLimites;
+        })(),
       },
       uso,
       acceso,
@@ -153,7 +157,7 @@ export class SuscripcionService {
   /**
    * Lanza ForbiddenError si crear `incremento` recursos de este tipo
    * excedería el límite del plan activo. `null`/ausente en `plan.limites`
-   * significa sin límite (plan Empresarial).
+   * significa sin límite (plan Empresarial sin límites personalizados).
    *
    * El parámetro `db` opcional permite llamarlo dentro de la MISMA transacción
    * (con lock) que hace las escrituras — ver `SincronizacionService.push()` —
@@ -177,7 +181,9 @@ export class SuscripcionService {
     // petición antes de llegar aquí; no hay límite que verificar.
     if (!suscripcion) return;
 
-    const limites = (suscripcion.plan.limites as Record<string, unknown>) ?? {};
+    const planLimites = (suscripcion.plan.limites as Record<string, unknown>) ?? {};
+    const customLimites = (suscripcion.limitesPersonalizados as Record<string, unknown>) ?? null;
+    const limites = customLimites ? { ...planLimites, ...customLimites } : planLimites;
     const limite = limites[CLAVE_LIMITE[recurso]];
     if (limite === null || limite === undefined) return;
 

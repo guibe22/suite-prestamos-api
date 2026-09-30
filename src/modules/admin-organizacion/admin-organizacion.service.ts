@@ -4,7 +4,7 @@ import { PagoService } from '../pago/pago.service.js';
 import { getPagination, getPaginationMeta } from '../../utils/pagination.js';
 import type { actualizarSuscripcionOrgSchema, listarOrganizacionesQuerySchema } from './admin-organizacion.schema.js';
 import type { z } from 'zod';
-import type { EstadoSuscripcion, Prisma } from '@prisma/client';
+import { Prisma, type EstadoSuscripcion } from '@prisma/client';
 
 type ActualizarSuscripcionInput = z.infer<typeof actualizarSuscripcionOrgSchema>;
 type ListarOrganizacionesQuery = Partial<z.infer<typeof listarOrganizacionesQuerySchema>>;
@@ -78,10 +78,12 @@ export class AdminOrganizacionService {
             avisoDias: org.suscripcion.avisoDias,
             diasGraciaSuspension: org.suscripcion.diasGraciaSuspension,
             avisoEnviadoEn: org.suscripcion.avisoEnviadoEn,
+            limitesPersonalizados: org.suscripcion.limitesPersonalizados,
             plan: {
               id: org.suscripcion.plan.id,
               codigo: org.suscripcion.plan.codigo,
               nombre: org.suscripcion.plan.nombre,
+              limites: org.suscripcion.plan.limites,
             },
           }
         : null,
@@ -138,6 +140,9 @@ export class AdminOrganizacionService {
       canceladaEn: normalizarFecha(data.canceladaEn),
       avisoDias: data.avisoDias,
       diasGraciaSuspension: data.diasGraciaSuspension,
+      ...(data.limitesPersonalizados !== undefined
+        ? { limitesPersonalizados: data.limitesPersonalizados ?? Prisma.DbNull }
+        : {}),
       ...(periodoFinEnCambio ? { avisoEnviadoEn: null } : {}),
     };
 

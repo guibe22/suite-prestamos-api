@@ -18,6 +18,16 @@ export const actualizarSuscripcionOrgSchema = z.object({
   // Solo relevantes con proveedor MANUAL (pago en efectivo) — ver Suscripcion en schema.prisma.
   avisoDias: z.number().int().min(0).nullable().optional(),
   diasGraciaSuspension: z.number().int().min(0).nullable().optional(),
+  // Límites personalizados definidos por el admin (ej. Plan Empresarial).
+  limitesPersonalizados: z
+    .object({
+      maxUsuarios: z.number().int().min(0).nullable().optional(),
+      maxClientes: z.number().int().min(0).nullable().optional(),
+      maxPrestamosActivos: z.number().int().min(0).nullable().optional(),
+      maxRutas: z.number().int().min(0).nullable().optional(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export const idParamSchema = z.object({

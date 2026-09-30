@@ -158,6 +158,11 @@ model Suscripcion {
   /// (ConfiguracionSistema.suscripcionGraciaDias vía obtenerNivelAcceso).
   diasGraciaSuspension Int?
 
+  /// Límites personalizados acordados directamente con el cliente (ej. Plan Empresarial).
+  /// Sobrescribe los límites del plan base (null = sin límite).
+  /// Ej: { "maxUsuarios": 50, "maxClientes": 2000, "maxPrestamosActivos": 5000, "maxRutas": 30 }
+  limitesPersonalizados Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
