@@ -4,6 +4,7 @@ import { logger } from '../../config/logger.js';
 import { ConfiguracionService } from '../configuracion/configuracion.service.js';
 import { ForbiddenError, NotFoundError } from '../../shared/errors/custom.error.js';
 import type { EventoRevenueCat } from './revenuecat.client.js';
+import { obtenerEstadoSuscriptor, puedeConsultarRevenueCat } from './revenuecat.client.js';
 import type { Prisma, ProveedorPago, Suscripcion } from '@prisma/client';
 
 const MS_DIA = 24 * 60 * 60 * 1000;
@@ -405,6 +406,107 @@ export class SuscripcionService {
         }
       },
     });
+  }
+
+  /**
+   * Pregunta a RevenueCat el estado REAL del suscriptor y, si no coincide con
+   * lo que tenemos guardado, lo corrige.
+   *
+   * Es la red de seguridad del webhook. Antes, el webhook era el único camino
+   * por el que una compra podía activarse: si un evento se perdía (endpoint
+   * caído más allá de la ventana de reintentos, despliegue en mal momento),
+   * el usuario quedaba pagando sin recibir su plan y sin ninguna forma de que
+   * el sistema se diera cuenta solo.
+   *
+   * Nunca DEGRADA por un problema nuestro: si no hay clave configurada o la
+   * consulta falla, se devuelve `cambiado: false` y se deja todo como estaba.
+   * Solo baja de plan cuando RevenueCat afirma positivamente que no hay nada
+   * activo Y la suscripción actual venía de RevenueCat (una suscripción MANUAL
+   * pagada en efectivo no se toca nunca: RevenueCat no sabe nada de ella).
+   */
+  async reconciliarConRevenueCat(
+    organizacionId: string
+  ): Promise<{ cambiado: boolean; motivo: string }> {
+    if (!puedeConsultarRevenueCat()) {
+      return { cambiado: false, motivo: 'RevenueCat no está configurado para consultas.' };
+    }
+
+    const suscripcion = await prisma.suscripcion.findUnique({ where: { organizacionId } });
+    if (!suscripcion) {
+      return { cambiado: false, motivo: 'La organización no tiene suscripción registrada.' };
+    }
+
+    let estado;
+    try {
+      estado = await obtenerEstadoSuscriptor(organizacionId);
+    } catch (error) {
+      logger.warn({ err: error, organizacionId }, 'No se pudo consultar el suscriptor en RevenueCat');
+      return { cambiado: false, motivo: 'No se pudo consultar RevenueCat.' };
+    }
+    if (!estado) {
+      return { cambiado: false, motivo: 'RevenueCat no devolvió estado.' };
+    }
+
+    const idsActivos = estado.activos.map((e) => e.id);
+
+    if (idsActivos.length === 0) {
+      // Sin nada activo en RevenueCat. Solo se actúa si la suscripción actual
+      // es de RevenueCat: las MANUAL (efectivo) y las TRIAL no le pertenecen.
+      if (suscripcion.proveedor !== 'REVENUE_CAT') {
+        return { cambiado: false, motivo: 'La suscripción no es de RevenueCat; no se toca.' };
+      }
+      if (suscripcion.estado === 'EXPIRADA' || suscripcion.estado === 'CANCELADA') {
+        return { cambiado: false, motivo: 'Ya estaba sin acceso; nada que corregir.' };
+      }
+      await prisma.suscripcion.update({
+        where: { id: suscripcion.id },
+        data: { estado: 'EXPIRADA', periodoFinEn: suscripcion.periodoFinEn ?? new Date() },
+      });
+      logger.info({ organizacionId }, 'Reconciliación: RevenueCat no reporta entitlements activos');
+      return { cambiado: true, motivo: 'La suscripción ya no está activa en la tienda.' };
+    }
+
+    // Igual que en el webhook: puede haber varios entitlements a la vez (a
+    // mitad de un upgrade), y se prefiere el plan de mayor `orden`.
+    const plan = await prisma.plan.findFirst({
+      where: { revenueCatEntitlementId: { in: idsActivos } },
+      orderBy: { orden: 'desc' },
+    });
+    if (!plan) {
+      logger.warn(
+        { organizacionId, idsActivos },
+        'Reconciliación: entitlements activos sin plan equivalente configurado'
+      );
+      return { cambiado: false, motivo: 'La tienda reporta un plan que no reconocemos.' };
+    }
+
+    const entitlement = estado.activos.find((e) => e.id === plan.revenueCatEntitlementId);
+    const periodoFinEn = entitlement?.expiresDate ? new Date(entitlement.expiresDate) : null;
+
+    const yaCoincide =
+      suscripcion.estado === 'ACTIVA' &&
+      suscripcion.planId === plan.id &&
+      suscripcion.periodoFinEn?.getTime() === periodoFinEn?.getTime();
+
+    if (yaCoincide) {
+      return { cambiado: false, motivo: 'Ya estaba al día.' };
+    }
+
+    await prisma.suscripcion.update({
+      where: { id: suscripcion.id },
+      data: {
+        planId: plan.id,
+        proveedor: 'REVENUE_CAT',
+        estado: 'ACTIVA',
+        ...(periodoFinEn ? { periodoFinEn } : {}),
+        canceladaEn: null,
+      },
+    });
+    logger.info(
+      { organizacionId, plan: plan.codigo },
+      'Reconciliación: suscripción activada/corregida desde RevenueCat'
+    );
+    return { cambiado: true, motivo: `Suscripción activa en el plan ${plan.nombre}.` };
   }
 
   /**

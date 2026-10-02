@@ -36,6 +36,12 @@ const envSchema = z.object({
   // EXPO_PUBLIC_*) para que rotarla no requiera un build nuevo de la app: el
   // cliente la pide en caliente vía GET /suscripcion/config.
   REVENUECAT_ANDROID_API_KEY: z.string().optional(),
+  // Clave SECRETA (sk_...) de la API REST de RevenueCat. NUNCA se envía al
+  // cliente: se usa solo en el servidor para reconciliar el estado real del
+  // suscriptor cuando un evento de webhook se pierde (ver
+  // obtenerEstadoSuscriptor). Sin ella, la reconciliación queda deshabilitada
+  // y el webhook sigue siendo el único camino.
+  REVENUECAT_SECRET_API_KEY: z.string().optional(),
 
   // Monitoreo de errores (Sentry). Opcional: sin DSN, el SDK queda
   // deshabilitado (ver config/sentry.ts) y no cambia ningún comportamiento.

@@ -56,3 +56,89 @@ export interface WebhookRevenueCat {
   api_version: string;
   event: EventoRevenueCat;
 }
+
+/** Entitlement tal como lo devuelve la API REST de RevenueCat. */
+export interface EntitlementSuscriptor {
+  /** Clave del entitlement (ej. "pro"), que mapea a Plan.revenueCatEntitlementId. */
+  id: string;
+  /** ISO-8601, o null en una compra no-renovable de por vida. */
+  expiresDate: string | null;
+  productIdentifier: string | null;
+}
+
+export interface EstadoSuscriptorRevenueCat {
+  /** Entitlements vigentes AHORA (ya filtrados por fecha de expiración). */
+  activos: EntitlementSuscriptor[];
+  /** Todos los conocidos, vigentes o no — para distinguir "expiró" de "nunca compró". */
+  todos: EntitlementSuscriptor[];
+}
+
+const REVENUECAT_API_BASE = 'https://api.revenuecat.com/v1';
+const REVENUECAT_TIMEOUT_MS = 10_000;
+
+/** `true` si se puede consultar la API REST (hay clave secreta configurada). */
+export function puedeConsultarRevenueCat(): boolean {
+  return !!env.REVENUECAT_SECRET_API_KEY;
+}
+
+/**
+ * Consulta el estado real del suscriptor en RevenueCat.
+ *
+ * Es la red de seguridad del webhook: si un evento se pierde (endpoint caído
+ * más allá de la ventana de reintentos de RevenueCat, un despliegue en mal
+ * momento), el usuario pagó y su suscripción nunca se activó. Preguntar
+ * directamente devuelve la verdad sin depender de que el evento llegue.
+ *
+ * Usa la clave SECRETA (`sk_...`), distinta de la pública del SDK que se le
+ * entrega al cliente en /suscripcion/config: esta nunca sale del servidor.
+ *
+ * Devuelve `null` si no hay clave configurada o el suscriptor no existe —
+ * ambos casos significan "no sé", nunca "no tiene suscripción", para no
+ * degradar a un usuario por un problema de configuración nuestro.
+ */
+export async function obtenerEstadoSuscriptor(
+  appUserId: string
+): Promise<EstadoSuscriptorRevenueCat | null> {
+  if (!env.REVENUECAT_SECRET_API_KEY) return null;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REVENUECAT_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${REVENUECAT_API_BASE}/subscribers/${encodeURIComponent(appUserId)}`, {
+      headers: {
+        Authorization: `Bearer ${env.REVENUECAT_SECRET_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      signal: controller.signal,
+    });
+
+    // 404 = RevenueCat no conoce a este app_user_id (nunca abrió la app con el
+    // SDK configurado). No es un error: simplemente no hay nada que reconciliar.
+    if (res.status === 404) return { activos: [], todos: [] };
+    if (!res.ok) {
+      throw new Error(`RevenueCat respondió ${res.status} al consultar el suscriptor.`);
+    }
+
+    const json: any = await res.json();
+    const entitlements = json?.subscriber?.entitlements ?? {};
+    const ahora = Date.now();
+
+    const todos: EntitlementSuscriptor[] = Object.entries(entitlements).map(
+      ([id, valor]: [string, any]) => ({
+        id,
+        expiresDate: valor?.expires_date ?? null,
+        productIdentifier: valor?.product_identifier ?? null,
+      })
+    );
+
+    // `expires_date: null` en RevenueCat significa que no caduca (compra de por
+    // vida), así que cuenta como activo.
+    const activos = todos.filter(
+      (e) => e.expiresDate === null || new Date(e.expiresDate).getTime() > ahora
+    );
+
+    return { activos, todos };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}

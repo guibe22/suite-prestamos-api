@@ -57,6 +57,9 @@ router.get('/config', authMiddleware, controller.config);
  *       200:
  *         description: Evento procesado (o ya procesado previamente)
  */
+// Reconciliación bajo demanda: red de seguridad por si el webhook se perdió.
+router.post('/reconciliar', authMiddleware, controller.reconciliar);
+
 router.post('/revenuecat/webhook', controller.revenuecatWebhook);
 
 export default router;
