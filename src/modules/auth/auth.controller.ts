@@ -126,7 +126,10 @@ export class AuthController {
         res.status(401).json({ success: false, message: 'Usuario no autenticado.' });
         return;
       }
-      await this.authService.eliminarCuenta(userId, req.body.password);
+      await this.authService.eliminarCuenta(userId, {
+        password: req.body.password,
+        confirmacionEmail: req.body.confirmacionEmail,
+      });
       sendSuccess(res, 'Cuenta eliminada con éxito.');
     } catch (error) {
       next(error);

@@ -53,9 +53,20 @@ export const aceptarInvitacionSchema = z.object({
   password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres.'),
 });
 
+/**
+ * Confirmación del borrado de cuenta. Admite dos formas porque no todas las
+ * cuentas tienen contraseña: las creadas con Google guardan `password: null`
+ * (ver googleAuth), y exigirles una las dejaba sin ninguna forma de borrarse
+ * desde la app — algo que las tiendas exigen que esté disponible para TODOS
+ * los usuarios. Esas confirman escribiendo el correo de su cuenta.
+ */
 export const eliminarCuentaSchema = z.object({
-  password: z.string().min(1, 'Debes confirmar tu contraseña actual.'),
+  password: z.string().min(1).optional(),
+  confirmacionEmail: z.string().min(1).optional(),
 });
+// Cuál de los dos hace falta depende de si la cuenta tiene contraseña, algo
+// que solo se sabe consultando al usuario: la regla vive en el servicio
+// (eliminarCuenta), no aquí.
 
 export const googleAuthSchema = z.object({
   idToken: z.string().min(1).optional(),

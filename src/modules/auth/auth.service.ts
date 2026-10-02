@@ -507,6 +507,11 @@ export class AuthService {
       email: user.email,
       rol: user.rol.nombre,
       permisos,
+      // Las cuentas creadas con Google no tienen contraseña. El cliente lo
+      // necesita para pedir la confirmación correcta al borrar la cuenta
+      // (contraseña vs. escribir el correo) en vez de ofrecer un campo de
+      // contraseña que esos usuarios no pueden llenar.
+      tienePassword: !!user.password,
       organizacionConfigurada: user.organizacion ? user.organizacion.configuracion !== null : false,
       organizacion: user.organizacion
         ? {
@@ -542,15 +547,35 @@ export class AuthService {
    * contraseña. Si es el último ADMIN/SUPER_ADMIN activo de su organización,
    * se bloquea para no dejarla sin nadie que administre el equipo.
    */
-  async eliminarCuenta(userId: string, password: string): Promise<void> {
+  async eliminarCuenta(
+    userId: string,
+    confirmacion: { password?: string; confirmacionEmail?: string }
+  ): Promise<void> {
     const user = await this.authRepository.findUserById(userId);
-    if (!user || !user.password) {
+    if (!user) {
       throw new UnauthorizedError('Usuario no encontrado.');
     }
 
-    const isPasswordValid = await comparePassword(password, user.password);
-    if (!isPasswordValid) {
-      throw new UnauthorizedError('La contraseña es incorrecta.');
+    if (user.password) {
+      // Cuenta con contraseña: se confirma con ella, como siempre.
+      if (!confirmacion.password) {
+        throw new UnauthorizedError('Debes confirmar tu contraseña actual.');
+      }
+      const isPasswordValid = await comparePassword(confirmacion.password, user.password);
+      if (!isPasswordValid) {
+        throw new UnauthorizedError('La contraseña es incorrecta.');
+      }
+    } else {
+      // Cuenta sin contraseña (registrada con Google): antes este caso caía en
+      // `!user.password` y respondía "Usuario no encontrado", dejando a esos
+      // usuarios sin forma de borrar su cuenta desde la app y con un mensaje
+      // que además mentía sobre el motivo. Confirman escribiendo su correo.
+      const escrito = (confirmacion.confirmacionEmail ?? '').toLowerCase().trim();
+      if (!escrito || escrito !== user.email.toLowerCase().trim()) {
+        throw new UnauthorizedError(
+          'Escribe el correo de tu cuenta exactamente como aparece para confirmar la eliminación.'
+        );
+      }
     }
 
     const esAdmin = user.rol.nombre === 'ADMIN' || user.rol.nombre === 'SUPER_ADMIN';
