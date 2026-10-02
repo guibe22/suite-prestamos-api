@@ -114,14 +114,53 @@ function soloVigentes(todos: EntitlementSuscriptor[]): EntitlementSuscriptor[] {
  * API v2: `/v2/projects/{projectId}/customers/{customerId}/active_entitlements`.
  * Es la que corresponde a las claves secretas que RevenueCat emite hoy.
  */
+/**
+ * Comprueba que `REVENUECAT_PROJECT_ID` corresponde a un proyecto real.
+ *
+ * Hace falta porque un 404 de la API v2 es ambiguo: tanto "este cliente no
+ * existe" (benigno) como "ese proyecto no existe" (configuración rota)
+ * responden lo mismo, con `type: "resource_missing"` en ambos casos. Tragarse
+ * el segundo dejaría la reconciliación muda para siempre, aparentando
+ * funcionar — el mismo fallo silencioso que ya costó una ronda de depuración
+ * con la incompatibilidad v1/v2.
+ *
+ * Usa el listado de clientes, que requiere el mismo permiso de solo lectura
+ * (`customer_information:customers:read`) que el resto de la reconciliación,
+ * así que no obliga a ampliar los permisos de la clave.
+ */
+async function verificarProyectoV2(): Promise<void> {
+  const res = await pedirARevenueCat(
+    `/v2/projects/${encodeURIComponent(env.REVENUECAT_PROJECT_ID!)}/customers?limit=1`
+  );
+
+  if (res.status === 404) {
+    throw new Error(
+      'RevenueCat no reconoce el REVENUECAT_PROJECT_ID configurado. ' +
+        'Cópialo de Project settings > General (campo "Project ID").'
+    );
+  }
+  if (res.status === 401 || res.status === 403) {
+    throw new Error(
+      'RevenueCat rechazó la clave secreta al verificar el proyecto. Revisa ' +
+        'REVENUECAT_SECRET_API_KEY y que tenga permiso de lectura de "Customer information".'
+    );
+  }
+  // Cualquier otra respuesta significa que el proyecto existe y la clave vale;
+  // el 404 original era entonces un cliente desconocido, que es normal.
+}
+
 async function consultarV2(appUserId: string): Promise<EstadoSuscriptorRevenueCat | null> {
   const res = await pedirARevenueCat(
     `/v2/projects/${encodeURIComponent(env.REVENUECAT_PROJECT_ID!)}` +
       `/customers/${encodeURIComponent(appUserId)}/active_entitlements`
   );
 
-  // El cliente no existe todavía en RevenueCat: no hay nada que reconciliar.
-  if (res.status === 404) return { activos: [], todos: [] };
+  if (res.status === 404) {
+    // Ambiguo: se confirma que el proyecto existe antes de dar por bueno el
+    // "no hay nada que reconciliar". Si la configuración está rota, esto lanza.
+    await verificarProyectoV2();
+    return { activos: [], todos: [] };
+  }
   if (res.status === 401 || res.status === 403) {
     throw new Error(
       'RevenueCat rechazó la clave secreta en la API v2. Revisa REVENUECAT_SECRET_API_KEY y REVENUECAT_PROJECT_ID.'

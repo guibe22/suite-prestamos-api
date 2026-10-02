@@ -131,12 +131,53 @@ describe('obtenerEstadoSuscriptor (consulta a RevenueCat)', () => {
     });
   });
 
-  it('un cliente desconocido (404) no es un error: no hay nada que reconciliar', async () => {
+  it('un cliente desconocido (404) no es un error en la v1: no hay nada que reconciliar', async () => {
     vi.stubGlobal('fetch', responderCon(404));
 
     const estado = await obtenerEstadoSuscriptor('org-nueva');
 
     expect(estado).toEqual({ activos: [], todos: [] });
+  });
+
+  describe('el 404 ambiguo de la v2', () => {
+    beforeEach(() => {
+      mockEnv.REVENUECAT_PROJECT_ID = 'proj_123';
+    });
+
+    it('un cliente desconocido es benigno si el proyecto SÍ existe', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce({ status: 404, ok: false, json: async () => ({}) })
+        .mockResolvedValueOnce({ status: 200, ok: true, json: async () => ({ items: [] }) });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const estado = await obtenerEstadoSuscriptor('org-nueva');
+
+      expect(estado).toEqual({ activos: [], todos: [] });
+      // La segunda llamada es la verificación del proyecto.
+      expect(fetchMock.mock.calls[1][0]).toBe(
+        'https://api.revenuecat.com/v2/projects/proj_123/customers?limit=1'
+      );
+    });
+
+    it('delata un Project ID equivocado en vez de aparentar que no hay nada que hacer', async () => {
+      // Antes, este caso devolvía {activos: []} igual que un cliente
+      // desconocido: la reconciliación quedaba muda para siempre pareciendo
+      // que funcionaba.
+      vi.stubGlobal('fetch', responderCon(404));
+
+      await expect(obtenerEstadoSuscriptor('org-1')).rejects.toThrow(/REVENUECAT_PROJECT_ID/);
+    });
+
+    it('delata una clave rechazada al verificar el proyecto', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce({ status: 404, ok: false, json: async () => ({}) })
+        .mockResolvedValueOnce({ status: 403, ok: false, json: async () => ({}) });
+      vi.stubGlobal('fetch', fetchMock);
+
+      await expect(obtenerEstadoSuscriptor('org-1')).rejects.toThrow(/clave secreta/);
+    });
   });
 
   it('propaga un fallo del servidor de RevenueCat', async () => {
