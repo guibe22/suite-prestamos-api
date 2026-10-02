@@ -73,12 +73,105 @@ export interface EstadoSuscriptorRevenueCat {
   todos: EntitlementSuscriptor[];
 }
 
-const REVENUECAT_API_BASE = 'https://api.revenuecat.com/v1';
+const REVENUECAT_API_BASE = 'https://api.revenuecat.com';
 const REVENUECAT_TIMEOUT_MS = 10_000;
 
 /** `true` si se puede consultar la API REST (hay clave secreta configurada). */
 export function puedeConsultarRevenueCat(): boolean {
   return !!env.REVENUECAT_SECRET_API_KEY;
+}
+
+async function pedirARevenueCat(path: string): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REVENUECAT_TIMEOUT_MS);
+  try {
+    return await fetch(`${REVENUECAT_API_BASE}${path}`, {
+      headers: {
+        Authorization: `Bearer ${env.REVENUECAT_SECRET_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/** Normaliza a ISO-8601, o null si el entitlement no caduca. */
+function aIso(valor: string | number | null | undefined): string | null {
+  if (valor === null || valor === undefined) return null;
+  if (typeof valor === 'number') return new Date(valor).toISOString();
+  return valor;
+}
+
+function soloVigentes(todos: EntitlementSuscriptor[]): EntitlementSuscriptor[] {
+  const ahora = Date.now();
+  // `expiresDate: null` significa que no caduca (compra de por vida).
+  return todos.filter((e) => e.expiresDate === null || new Date(e.expiresDate).getTime() > ahora);
+}
+
+/**
+ * API v2: `/v2/projects/{projectId}/customers/{customerId}/active_entitlements`.
+ * Es la que corresponde a las claves secretas que RevenueCat emite hoy.
+ */
+async function consultarV2(appUserId: string): Promise<EstadoSuscriptorRevenueCat | null> {
+  const res = await pedirARevenueCat(
+    `/v2/projects/${encodeURIComponent(env.REVENUECAT_PROJECT_ID!)}` +
+      `/customers/${encodeURIComponent(appUserId)}/active_entitlements`
+  );
+
+  // El cliente no existe todavía en RevenueCat: no hay nada que reconciliar.
+  if (res.status === 404) return { activos: [], todos: [] };
+  if (res.status === 401 || res.status === 403) {
+    throw new Error(
+      'RevenueCat rechazó la clave secreta en la API v2. Revisa REVENUECAT_SECRET_API_KEY y REVENUECAT_PROJECT_ID.'
+    );
+  }
+  if (!res.ok) {
+    throw new Error(`RevenueCat (v2) respondió ${res.status} al consultar el cliente.`);
+  }
+
+  const json: any = await res.json();
+  // Este endpoint ya devuelve solo los activos; se vuelve a filtrar por fecha
+  // por si acaso, y se reusa `todos` para no inventar una forma distinta.
+  const todos: EntitlementSuscriptor[] = (json?.items ?? []).map((item: any) => ({
+    id: item?.entitlement_id,
+    expiresDate: aIso(item?.expires_at),
+    productIdentifier: item?.product_id ?? null,
+  }));
+
+  return { activos: soloVigentes(todos), todos };
+}
+
+/** API v1: `/v1/subscribers/{appUserId}`. Solo funciona con claves v1 (heredadas). */
+async function consultarV1(appUserId: string): Promise<EstadoSuscriptorRevenueCat | null> {
+  const res = await pedirARevenueCat(`/v1/subscribers/${encodeURIComponent(appUserId)}`);
+
+  if (res.status === 404) return { activos: [], todos: [] };
+  if (res.status === 401 || res.status === 403) {
+    // El caso más probable: una clave secreta moderna (v2) contra un endpoint
+    // v1. No se puede arreglar cambiando de clave — hay que pasar a la v2.
+    throw new Error(
+      'RevenueCat rechazó la clave secreta en la API v1. Si la clave es nueva (generación v2), ' +
+        'configura REVENUECAT_PROJECT_ID para que la reconciliación use la API v2.'
+    );
+  }
+  if (!res.ok) {
+    throw new Error(`RevenueCat (v1) respondió ${res.status} al consultar el suscriptor.`);
+  }
+
+  const json: any = await res.json();
+  const entitlements = json?.subscriber?.entitlements ?? {};
+
+  const todos: EntitlementSuscriptor[] = Object.entries(entitlements).map(
+    ([id, valor]: [string, any]) => ({
+      id,
+      expiresDate: aIso(valor?.expires_date),
+      productIdentifier: valor?.product_identifier ?? null,
+    })
+  );
+
+  return { activos: soloVigentes(todos), todos };
 }
 
 /**
@@ -101,44 +194,10 @@ export async function obtenerEstadoSuscriptor(
 ): Promise<EstadoSuscriptorRevenueCat | null> {
   if (!env.REVENUECAT_SECRET_API_KEY) return null;
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REVENUECAT_TIMEOUT_MS);
-  try {
-    const res = await fetch(`${REVENUECAT_API_BASE}/subscribers/${encodeURIComponent(appUserId)}`, {
-      headers: {
-        Authorization: `Bearer ${env.REVENUECAT_SECRET_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      signal: controller.signal,
-    });
-
-    // 404 = RevenueCat no conoce a este app_user_id (nunca abrió la app con el
-    // SDK configurado). No es un error: simplemente no hay nada que reconciliar.
-    if (res.status === 404) return { activos: [], todos: [] };
-    if (!res.ok) {
-      throw new Error(`RevenueCat respondió ${res.status} al consultar el suscriptor.`);
-    }
-
-    const json: any = await res.json();
-    const entitlements = json?.subscriber?.entitlements ?? {};
-    const ahora = Date.now();
-
-    const todos: EntitlementSuscriptor[] = Object.entries(entitlements).map(
-      ([id, valor]: [string, any]) => ({
-        id,
-        expiresDate: valor?.expires_date ?? null,
-        productIdentifier: valor?.product_identifier ?? null,
-      })
-    );
-
-    // `expires_date: null` en RevenueCat significa que no caduca (compra de por
-    // vida), así que cuenta como activo.
-    const activos = todos.filter(
-      (e) => e.expiresDate === null || new Date(e.expiresDate).getTime() > ahora
-    );
-
-    return { activos, todos };
-  } finally {
-    clearTimeout(timeoutId);
-  }
+  // Las claves secretas de RevenueCat son de dos generaciones y NO son
+  // intercambiables entre versiones de la API. Hoy solo se emiten claves v2,
+  // así que la v2 es el camino normal; la v1 queda para cuentas con una clave
+  // heredada. `REVENUECAT_PROJECT_ID` es lo que decide cuál usar, porque la
+  // v2 lo necesita en la ruta y la v1 no.
+  return env.REVENUECAT_PROJECT_ID ? consultarV2(appUserId) : consultarV1(appUserId);
 }

@@ -439,9 +439,16 @@ export class SuscripcionService {
     let estado;
     try {
       estado = await obtenerEstadoSuscriptor(organizacionId);
-    } catch (error) {
+    } catch (error: any) {
       logger.warn({ err: error, organizacionId }, 'No se pudo consultar el suscriptor en RevenueCat');
-      return { cambiado: false, motivo: 'No se pudo consultar RevenueCat.' };
+      // Se devuelve el motivo REAL, no uno genérico: los fallos típicos aquí
+      // son de configuración (clave incompatible con la versión de la API,
+      // project id ausente) y, si se esconden, la reconciliación parece
+      // funcionar mientras en realidad nunca hace nada.
+      return {
+        cambiado: false,
+        motivo: error?.message || 'No se pudo consultar RevenueCat.',
+      };
     }
     if (!estado) {
       return { cambiado: false, motivo: 'RevenueCat no devolvió estado.' };

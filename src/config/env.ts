@@ -42,6 +42,12 @@ const envSchema = z.object({
   // obtenerEstadoSuscriptor). Sin ella, la reconciliación queda deshabilitada
   // y el webhook sigue siendo el único camino.
   REVENUECAT_SECRET_API_KEY: z.string().optional(),
+  // Id del proyecto en RevenueCat. Su presencia selecciona la API v2 para la
+  // reconciliación; sin él se usa la v1. Importa porque las claves secretas
+  // son de dos generaciones y NO son intercambiables entre versiones de la
+  // API: una clave v2 (las únicas que RevenueCat emite hoy) contra un
+  // endpoint v1 responde 403. Si tu clave es nueva, configura esto.
+  REVENUECAT_PROJECT_ID: z.string().optional(),
 
   // Monitoreo de errores (Sentry). Opcional: sin DSN, el SDK queda
   // deshabilitado (ver config/sentry.ts) y no cambia ningún comportamiento.
