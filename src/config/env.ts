@@ -18,6 +18,11 @@ const envSchema = z.object({
   // Orígenes permitidos para CORS (separados por coma). Requerido en producción.
   CORS_ORIGINS: z.string().optional(),
 
+  // Base del panel Next.js, que es quien sirve las páginas legales
+  // (/privacidad, /terminos, /eliminar-cuenta). La API solo las redirige:
+  // ver app.ts. Sin barra final.
+  PANEL_WEB_URL: z.string().url().default('https://suite-prestamos-admin.galvezwilber.com'),
+
   // Suscripciones / monetización.
   // El enforcement (bloquear o no según el estado de la suscripción) ya NO
   // vive aquí: es un toggle en la tabla ConfiguracionSistema, editable desde

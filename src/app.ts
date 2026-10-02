@@ -8,6 +8,7 @@ import router from './routes/index.js';
 import { errorMiddleware } from './middlewares/error.middleware.js';
 import { logger } from './config/logger.js';
 import { env } from './config/env.js';
+import { PAGINAS_LEGALES, urlPaginaLegal } from './shared/legal/paginas-legales.js';
 
 const app = express();
 const isProduction = env.NODE_ENV === 'production';
@@ -76,6 +77,15 @@ app.use('/api/v1', router);
 app.get('/health', (_req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date() });
 });
+
+// Páginas legales: las sirve el panel Next.js. Aquí solo viven como redirect
+// permanente, para las versiones de la app ya instaladas que todavía apuntan
+// al dominio de la API (ver shared/legal/paginas-legales.ts).
+for (const ruta of PAGINAS_LEGALES) {
+  app.get(ruta, (_req, res) => {
+    res.redirect(301, urlPaginaLegal(env.PANEL_WEB_URL, ruta));
+  });
+}
 
 // Endpoint temporal para recibir logs de depuración del cliente
 app.post('/api/debug-log', (req, res) => {
