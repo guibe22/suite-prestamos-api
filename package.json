@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "prisma generate && tsc",
-    "start": "node dist/server.js",
+    "start": "prisma migrate deploy && node dist/server.js",
     "lint": "biome lint src",
     "format": "biome format --write src",
     "typecheck": "tsc --noEmit",
@@ -18,6 +18,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
+    "db:migrate:status": "prisma migrate status",
     "db:seed": "tsx prisma/seed.ts",
     "create-superadmin": "tsx src/scripts/create-superadmin.ts",
     "migrar-proveedor-pago": "tsx src/scripts/migrar-proveedor-pago.ts",

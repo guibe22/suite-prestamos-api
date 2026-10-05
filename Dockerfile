@@ -18,5 +18,12 @@ COPY package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
+# `schema.prisma` NO declara la url del datasource: la toma de prisma.config.ts.
+# Sin este archivo, el `migrate deploy` del arranque no sabría a qué base conectarse.
+COPY --from=builder /app/prisma.config.ts ./
 EXPOSE 3020
-CMD ["node", "dist/server.js"]
+# Vía `npm run start` (y no `node dist/server.js` directo) para que el arranque
+# aplique las migraciones pendientes antes de levantar el servidor. Si una
+# migración falla, el contenedor NO arranca: es preferible a servir contra un
+# esquema que no corresponde.
+CMD ["npm", "run", "start"]
