@@ -97,12 +97,24 @@ describe('enviarAnuncio', () => {
     await expect(service.enviarAnuncio(anuncio)).rejects.toBeInstanceOf(NotFoundError);
   });
 
-  it('excluye borrados y a quien nunca aceptó la invitación', async () => {
+  it('excluye borrados y a quien tiene la invitación pendiente', async () => {
     await service.enviarAnuncio(anuncio);
 
     const where = mockPrisma.usuario.findMany.mock.calls[0][0].where;
     expect(where.deletedAt).toBeNull();
-    expect(where.invitacionAceptadaEn).toEqual({ not: null });
+    expect(where.NOT).toEqual({
+      AND: [{ invitacionToken: { not: null } }, { invitacionAceptadaEn: null }],
+    });
+  });
+
+  it('NO filtra por invitacionAceptadaEn a secas: el dueño de la organización no tiene fecha', async () => {
+    // El dueño se registra directo, sin invitación: invitacionToken e
+    // invitacionAceptadaEn quedan nulos. Un filtro `invitacionAceptadaEn:
+    // { not: null }` lo dejaba fuera de todos los anuncios de plataforma.
+    await service.enviarAnuncio(anuncio);
+
+    const where = mockPrisma.usuario.findMany.mock.calls[0][0].where;
+    expect(where.invitacionAceptadaEn).toBeUndefined();
   });
 
   it('crea una fila POR USUARIO: el estado de leído no puede ser compartido', async () => {

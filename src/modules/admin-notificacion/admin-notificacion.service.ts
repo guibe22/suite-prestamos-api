@@ -54,7 +54,16 @@ export class AdminNotificacionService {
         deletedAt: null,
         // Un invitado que nunca aceptó no puede entrar a la app; mandarle una
         // notificación solo generaría una fila que nadie va a leer.
-        invitacionAceptadaEn: { not: null },
+        //
+        // OJO con la forma de este filtro: la cuenta del DUEÑO de la
+        // organización se crea por registro directo, sin invitación, así que
+        // tiene `invitacionAceptadaEn` nulo (ver el comentario del modelo
+        // Usuario). Filtrar por `invitacionAceptadaEn: { not: null }` dejaba
+        // fuera justo a los administradores fundadores — es decir, a los
+        // destinatarios más importantes de un anuncio de plataforma. Lo que
+        // hay que excluir es la invitación PENDIENTE: token emitido y todavía
+        // sin aceptar.
+        NOT: { AND: [{ invitacionToken: { not: null } }, { invitacionAceptadaEn: null }] },
       },
       select: { id: true, organizacionId: true },
       take: MAX_DESTINATARIOS + 1,
