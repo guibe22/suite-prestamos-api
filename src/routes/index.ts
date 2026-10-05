@@ -9,9 +9,11 @@ import { sincronizacionRoutes } from '../modules/sincronizacion/index.js';
 import { suscripcionRoutes } from '../modules/suscripcion/index.js';
 import { adminPlanRoutes } from '../modules/admin-plan/index.js';
 import { adminOrganizacionRoutes } from '../modules/admin-organizacion/index.js';
+import { notificacionRoutes } from '../modules/notificacion/index.js';
+import { adminNotificacionRoutes } from '../modules/admin-notificacion/index.js';
 
-// Nota: cliente, prestamo, caja, cuota, documento, referencia, notificacion,
-// auditoria, movimiento-caja, rol, cuenta y organizacion NO tienen módulo REST
+// Nota: cliente, prestamo, caja, cuota, documento, referencia, auditoria,
+// movimiento-caja, rol, cuenta y organizacion NO tienen módulo REST
 // — todas sus mutaciones ocurren vía POST /sincronizacion/push (WatermelonDB
 // sync). Existieron como placeholders vacíos (sin un solo handler) y se
 // eliminaron para no dejar superficie muerta/confusa en el repo.
@@ -27,7 +29,9 @@ router.use('/gasto', gastoRoutes);
 router.use('/configuracion', configuracionRoutes);
 router.use('/sincronizacion', sincronizacionRoutes);
 router.use('/suscripcion', suscripcionRoutes);
+router.use('/notificacion', notificacionRoutes);
 router.use('/admin/planes', adminPlanRoutes);
 router.use('/admin/organizaciones', adminOrganizacionRoutes);
+router.use('/admin/notificaciones', adminNotificacionRoutes);
 
 export default router;

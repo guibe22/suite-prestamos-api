@@ -38,7 +38,8 @@ model Organizacion {
   rutas    Ruta[]
   jornadas JornadaCobranza[]
 
-  suscripcion Suscripcion?
+  suscripcion    Suscripcion?
+  notificaciones Notificacion[]
 }
 
 /// Catálogo de planes de suscripción. Editable vía seed/admin sin tocar
@@ -304,6 +305,10 @@ model Usuario {
   invitacionAceptadaEn DateTime?
 
   auditorias Auditoria[]
+
+  dispositivosPush        DispositivoPush[]
+  notificaciones          Notificacion[]
+  preferenciaNotificacion PreferenciaNotificacion?
 }
 
 enum EstadoCliente {
@@ -470,35 +475,35 @@ model DocumentoCliente {
 }
 
 model Prestamo {
-  id               String    @id @default(uuid())
-  clienteId        String
-  cliente          Cliente   @relation(fields: [clienteId], references: [id])
+  id                   String   @id @default(uuid())
+  clienteId            String
+  cliente              Cliente  @relation(fields: [clienteId], references: [id])
   // Cobrador que desembolsó el préstamo. Sin esto, "préstamos entregados hoy"
   // en el cálculo de caja solo podía filtrarse por fecha y contaminaba el
   // balance de un cobrador con desembolsos de otros el mismo día.
-  usuarioId        String?
-  usuario          Usuario?  @relation(fields: [usuarioId], references: [id])
-  monto            Decimal   @db.Decimal(12, 2)
-  tasaInteres      Decimal   @db.Decimal(5, 2) // Porcentaje
-  plazo            Int // Cantidad de cuotas
+  usuarioId            String?
+  usuario              Usuario? @relation(fields: [usuarioId], references: [id])
+  monto                Decimal  @db.Decimal(12, 2)
+  tasaInteres          Decimal  @db.Decimal(5, 2) // Porcentaje
+  plazo                Int // Cantidad de cuotas
   // Valores reales que escribe la app móvil: ACTIVO, LIQUIDADO (MOROSO,
   // VENCIDO, RENOVABLE y ATRASADO son estados VISUALES derivados en el
   // cliente, nunca persistidos aquí).
-  estado           String // ACTIVO, LIQUIDADO
-  fechaInicio      DateTime
-  fechaVencimiento DateTime
+  estado               String // ACTIVO, LIQUIDADO
+  fechaInicio          DateTime
+  fechaVencimiento     DateTime
   // Préstamo "viejo" (deuda preexistente cargada al sistema, no originada
   // ahora): si es false, no debe aparecer en la jornada de cobro activa.
   // NULL = préstamos creados antes de este campo, tratarlos como true.
-  incluirEnJornada Boolean?
+  incluirEnJornada     Boolean?
   // Código legible (P-000001) persistido en vez de recalculado en memoria
   // contando filas — ese cálculo era frágil entre dispositivos offline-first.
-  codigo           String?
+  codigo               String?
   // Si este préstamo nació de saldar uno anterior con saldo pendiente
   // (ver Fase 6 del feedback de testers), aquí queda el id del que reemplazó.
   renovadoDePrestamoId String?
   // Firma del cliente (PNG en base64) capturada antes de guardar el préstamo.
-  firmaBase64          String? @db.Text
+  firmaBase64          String?  @db.Text
 
   // Cliente de referencia (opcional): quién recomendó a este cliente para
   // este préstamo puntual — puede repetirse o variar en cada préstamo, no es
@@ -513,13 +518,13 @@ model Prestamo {
   referenciaIdentificacion String?
   // Firma de la referencia (PNG en base64), igual que firmaBase64 pero
   // opcional — solo si la empresa decide hacerla firmar también el contrato.
-  referenciaFirmaBase64    String? @db.Text
+  referenciaFirmaBase64    String?  @db.Text
 
   // Gastos administrativos/de cierre retenidos del desembolso: el cliente
   // recibe `monto - gastosCierre` en efectivo pero debe el `monto` completo, así
   // que el cuadre de la jornada resta este egreso ya neteado. NULL = préstamos
   // anteriores al campo (sin retención) — ver migración v26 de WatermelonDB.
-  gastosCierre     Decimal?  @db.Decimal(12, 2)
+  gastosCierre Decimal? @db.Decimal(12, 2)
 
   // Mora pendiente acumulada de este préstamo. El worker mora-recalc.worker.ts
   // la recalcula diariamente; el Admin puede modificarla manualmente; al cobrar,
@@ -529,10 +534,10 @@ model Prestamo {
   // Timestamp de la última vez que el worker actualizó moraAcumulada automáticamente.
   moraFechaCalculo DateTime?
 
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
-  deletedAt        DateTime?
-  deletedBy        String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+  deletedBy String?
 
   cuotas Cuota[]
   pagos  Pago[]
@@ -571,40 +576,40 @@ model Cuota {
 }
 
 model Pago {
-  id         String           @id @default(uuid())
-  prestamoId String
-  prestamo   Prestamo         @relation(fields: [prestamoId], references: [id])
-  monto      Decimal          @db.Decimal(12, 2)
-  fechaPago  DateTime         @default(now())
-  cajaId     String?
-  caja       Caja?            @relation(fields: [cajaId], references: [id])
+  id                     String           @id @default(uuid())
+  prestamoId             String
+  prestamo               Prestamo         @relation(fields: [prestamoId], references: [id])
+  monto                  Decimal          @db.Decimal(12, 2)
+  fechaPago              DateTime         @default(now())
+  cajaId                 String?
+  caja                   Caja?            @relation(fields: [cajaId], references: [id])
   // A qué jornada de cobro pertenece este pago (para poder listar/detallar
   // los ingresos de una jornada concreta, igual que Gasto.jornadaId).
-  jornadaId  String?
-  jornada    JornadaCobranza? @relation(fields: [jornadaId], references: [id], onDelete: SetNull)
-  metodoPago String // EFECTIVO, TRANSFERENCIA, etc.
-  referencia String?
+  jornadaId              String?
+  jornada                JornadaCobranza? @relation(fields: [jornadaId], references: [id], onDelete: SetNull)
+  metodoPago             String // EFECTIVO, TRANSFERENCIA, etc.
+  referencia             String?
   // Split de mora dentro del mismo pago: el cliente entrega `monto` (ya
   // incluye `moraCobrada`) y el sistema separa cuánto fue a cuota/capital
   // vs. mora, en vez de un MovimientoCaja de mora sin relación al pago.
-  moraCobrada            Decimal  @default(0) @db.Decimal(12, 2)
-  porcentajeMoraAplicado Decimal? @db.Decimal(5, 2)
-  moraAcumuladaAlMomento Decimal? @db.Decimal(12, 2)
+  moraCobrada            Decimal          @default(0) @db.Decimal(12, 2)
+  porcentajeMoraAplicado Decimal?         @db.Decimal(5, 2)
+  moraAcumuladaAlMomento Decimal?         @db.Decimal(12, 2)
   cuotaNumero            Int?
-  esParcial              Boolean  @default(false)
+  esParcial              Boolean          @default(false)
   // Saldo pendiente del préstamo justo después de aplicar este pago (snapshot
   // histórico). NULL = pagos previos a este campo, que no lo tienen; el
   // recibo reimpreso aproxima con el saldo actual en ese caso (ver
   // historial.tsx en la app móvil).
-  saldoRestanteAlMomento Decimal? @db.Decimal(12, 2)
+  saldoRestanteAlMomento Decimal?         @db.Decimal(12, 2)
   // JSON de { numeroCuota, totalCuotas, monto, completa }[]: a qué cuota(s)
   // se aplicó este pago, para que el recibo pueda desglosar "Completivo
   // cuota 9/13" + "Abono cuota 10/13" cuando un cobro abarca más de una.
-  detalleCuotas String?
-  createdAt  DateTime         @default(now())
-  updatedAt  DateTime         @updatedAt
-  deletedAt  DateTime?
-  deletedBy  String?
+  detalleCuotas          String?
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+  deletedAt              DateTime?
+  deletedBy              String?
 
   @@index([prestamoId])
   @@index([cajaId])
@@ -720,4 +725,103 @@ model JornadaCobranza {
   pagos          Pago[]
 
   @@map("jornadas_cobranza")
+}
+
+// ---------------------------------------------------------------------------
+// Notificaciones
+//
+// Deliberadamente FUERA del protocolo de sincronización de WatermelonDB: estas
+// tablas son unidireccionales servidor→cliente (la app nunca crea una
+// Notificacion) y se consumen por REST + caché en AsyncStorage. Meterlas en el
+// push obligaría a replicar cada columna en el esquema del cliente y a sumar
+// sus DateTime a `dateFields`, con el riesgo de romper el push entero a cambio
+// de nada.
+// ---------------------------------------------------------------------------
+
+/// Categorías de notificación. Son también los ids de los canales de Android
+/// que crea la app (ver services/notificaciones.ts): deben coincidir.
+enum CategoriaNotificacion {
+  COBRANZA
+  JORNADA
+  EQUIPO
+  SUSCRIPCION
+  SINCRONIZACION
+}
+
+/// Token de push de un dispositivo concreto. Un usuario puede tener varios
+/// (teléfono + tablet) y un mismo dispositivo puede cambiar de dueño: por eso
+/// la unicidad es del token, no del par (usuario, token).
+model DispositivoPush {
+  id        String  @id @default(uuid())
+  usuarioId String
+  usuario   Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  /// ExponentPushToken[...]
+  token      String  @unique
+  plataforma String // android | ios
+  appVersion String?
+
+  /// Se apaga al recibir DeviceNotRegistered de Expo o al cerrar sesión.
+  /// No se borra la fila: conservarla evita reintentos y deja rastro.
+  activo      Boolean  @default(true)
+  ultimoUsoEn DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([usuarioId, activo])
+}
+
+/// Una notificación destinada a un usuario (o a toda una organización cuando
+/// `usuarioId` es null). La fila se crea SIEMPRE, se envíe o no el push: si el
+/// envío falla o el usuario tiene la categoría apagada, igual queda en su
+/// bandeja para cuando abra la app.
+model Notificacion {
+  id             String       @id @default(uuid())
+  organizacionId String
+  organizacion   Organizacion @relation(fields: [organizacionId], references: [id], onDelete: Cascade)
+
+  /// Null = dirigida a la organización entera.
+  usuarioId String?
+  usuario   Usuario? @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  categoria CategoriaNotificacion
+  titulo    String
+  cuerpo    String
+
+  /// Payload del deep link: { "ruta": "/jornada", "params": { ... } }
+  data Json?
+
+  leidaEn    DateTime?
+  enviadaEn  DateTime?
+  errorEnvio String?
+
+  /// Clave de deduplicación del disparador que la creó (ej.
+  /// "suscripcion-suspendida:<suscripcionId>:<periodoFinEn>"). Hace que un
+  /// worker que corre dos veces no genere duplicados.
+  claveIdempotencia String? @unique
+
+  createdAt DateTime @default(now())
+
+  @@index([usuarioId, leidaEn])
+  @@index([organizacionId, createdAt])
+}
+
+/// Preferencias por usuario. Viven en el servidor y no solo en el dispositivo
+/// para que el envío de push las respete sin tener que preguntarle al cliente,
+/// y para que sobrevivan a una reinstalación.
+model PreferenciaNotificacion {
+  usuarioId String  @id
+  usuario   Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  cobranza       Boolean @default(true)
+  jornada        Boolean @default(true)
+  equipo         Boolean @default(true)
+  suscripcion    Boolean @default(true)
+  sincronizacion Boolean @default(false)
+
+  sonido    Boolean @default(true)
+  vibracion Boolean @default(true)
+
+  updatedAt DateTime @updatedAt
 }

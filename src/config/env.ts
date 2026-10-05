@@ -52,6 +52,13 @@ const envSchema = z.object({
   // Monitoreo de errores (Sentry). Opcional: sin DSN, el SDK queda
   // deshabilitado (ver config/sentry.ts) y no cambia ningún comportamiento.
   SENTRY_DSN: z.string().optional(),
+
+  // Notificaciones push (Expo Push Service). OPCIONAL: sin él los envíos
+  // siguen funcionando de forma anónima, que es suficiente para volúmenes
+  // bajos. Configurarlo en producción habilita las cuotas más altas y permite
+  // que Expo identifique de quién son los envíos. Se genera en
+  // expo.dev → Account settings → Access tokens.
+  EXPO_ACCESS_TOKEN: z.string().optional(),
 })
   .refine((e) => e.NODE_ENV !== 'production' || !/change-me/i.test(e.JWT_SECRET), {
     message: 'JWT_SECRET no puede ser el valor placeholder en producción.',
