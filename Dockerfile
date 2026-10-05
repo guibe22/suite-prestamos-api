@@ -23,7 +23,16 @@ COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./
 EXPOSE 3020
 # Vía `npm run start` (y no `node dist/server.js` directo) para que el arranque
-# aplique las migraciones pendientes antes de levantar el servidor. Si una
-# migración falla, el contenedor NO arranca: es preferible a servir contra un
-# esquema que no corresponde.
+# sincronice el esquema antes de levantar el servidor.
+#
+# Se usa `db push` y no `migrate deploy` porque esta base se creó con db push y
+# nunca registró historial de migraciones (`migrate deploy` falla ahí con P3005).
+#
+# En Prisma 7 `db push` solo acepta --accept-data-loss y --force-reset; no
+# existe --skip-generate (eso era Prisma 5/6) y pasarlo hace fallar el arranque.
+#
+# DELIBERADAMENTE sin `--accept-data-loss`: si el diff exigiera eliminar alguna
+# columna o tabla, db push se niega y el contenedor no arranca, en vez de
+# destruir datos en silencio. Si alguna vez falla por eso, hay que mirar QUÉ
+# quiere borrar antes de desbloquearlo a mano.
 CMD ["npm", "run", "start"]
