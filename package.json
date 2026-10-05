@@ -19,6 +19,7 @@
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:migrate:status": "prisma migrate status",
+    "db:baseline": "prisma migrate resolve --applied 0_baseline && prisma migrate resolve --applied 20260721190720_add_min_version_app && prisma migrate resolve --applied 20260728124014_add_suscripcion_manual_vencimiento && prisma migrate resolve --applied 20260804000000_add_mora_acumulada_prestamo && prisma migrate resolve --applied 20260804120000_add_gastos_cierre_prestamo && prisma migrate resolve --applied 20260929120000_add_permisos_usuario",
     "db:seed": "tsx prisma/seed.ts",
     "create-superadmin": "tsx src/scripts/create-superadmin.ts",
     "migrar-proveedor-pago": "tsx src/scripts/migrar-proveedor-pago.ts",
