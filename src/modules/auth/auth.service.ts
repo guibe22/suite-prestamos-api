@@ -478,6 +478,10 @@ export class AuthService {
         id: user.id,
         email: user.email,
         rol: user.rol.nombre,
+        // Sin esto el token renovado pierde los permisos explicitos del usuario:
+        // checkPermission caeria al preset del rol y su acceso cambiaria en
+        // silencio en cuanto caduca el access token.
+        permisos: resolverPermisosUsuario(user.rol.nombre, user.permisos),
         organizacionId: user.organizacionId || undefined,
       };
 
