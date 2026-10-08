@@ -11,6 +11,7 @@ import { adminPlanRoutes } from '../modules/admin-plan/index.js';
 import { adminOrganizacionRoutes } from '../modules/admin-organizacion/index.js';
 import { notificacionRoutes } from '../modules/notificacion/index.js';
 import { adminNotificacionRoutes } from '../modules/admin-notificacion/index.js';
+import { telemetriaRoutes } from '../modules/telemetria/index.js';
 
 // Nota: cliente, prestamo, caja, cuota, documento, referencia, auditoria,
 // movimiento-caja, rol, cuenta y organizacion NO tienen módulo REST
@@ -30,6 +31,7 @@ router.use('/configuracion', configuracionRoutes);
 router.use('/sincronizacion', sincronizacionRoutes);
 router.use('/suscripcion', suscripcionRoutes);
 router.use('/notificacion', notificacionRoutes);
+router.use('/telemetria', telemetriaRoutes);
 router.use('/admin/planes', adminPlanRoutes);
 router.use('/admin/organizaciones', adminOrganizacionRoutes);
 router.use('/admin/notificaciones', adminNotificacionRoutes);
