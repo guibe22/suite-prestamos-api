@@ -129,6 +129,32 @@ export class SuscripcionService {
     };
   }
 
+  /**
+   * Catálogo de planes para la web pública (sin sesión).
+   *
+   * Es el mismo listado que ve la pantalla de facturación, menos lo que no
+   * tiene por qué salir de casa: el `id` interno y el
+   * `revenueCatEntitlementId`, que es configuración del dashboard de
+   * RevenueCat y no le dice nada a un visitante.
+   *
+   * `diasTrial` sí sale: es la prueba que anuncia la landing, y anunciarla
+   * desde un número escrito a mano en el HTML fue exactamente el problema que
+   * se quiso evitar.
+   */
+  async listarPlanesPublicos() {
+    const planes = await prisma.plan.findMany({ where: { activo: true }, orderBy: { orden: 'asc' } });
+    return planes.map((plan) => ({
+      codigo: plan.codigo,
+      nombre: plan.nombre,
+      descripcion: plan.descripcion,
+      precioMensual: Number(plan.precioMensual),
+      moneda: plan.moneda,
+      limites: plan.limites,
+      esPredeterminado: plan.esPredeterminado,
+      diasTrial: plan.diasTrial,
+    }));
+  }
+
   /** Catálogo público de planes activos, para que la pantalla de facturación ofrezca a cuál suscribirse. */
   async listarPlanesActivos() {
     const planes = await prisma.plan.findMany({ where: { activo: true }, orderBy: { orden: 'asc' } });

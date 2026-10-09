@@ -34,6 +34,15 @@ export class SuscripcionController {
     }
   };
 
+  planesPublicos = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const resultado = await this.suscripcionService.listarPlanesPublicos();
+      sendSuccess(res, 'Planes públicos disponibles.', resultado);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   config = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const resultado = this.suscripcionService.obtenerConfigCliente();

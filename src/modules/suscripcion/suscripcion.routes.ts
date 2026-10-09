@@ -35,6 +35,18 @@ router.get('/planes', authMiddleware, controller.planes);
 
 /**
  * @swagger
+ * /suscripcion/planes/publicos:
+ *   get:
+ *     summary: Catálogo de planes para la web pública (sin auth) — sin id interno ni entitlement de RevenueCat
+ *     tags: [Suscripcion]
+ *     responses:
+ *       200:
+ *         description: Lista de planes activos, con precio, límites y días de prueba
+ */
+router.get('/planes/publicos', controller.planesPublicos);
+
+/**
+ * @swagger
  * /suscripcion/config:
  *   get:
  *     summary: Config pública para inicializar el SDK de RevenueCat en el cliente
