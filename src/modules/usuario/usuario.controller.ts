@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import { UsuarioService } from './usuario.service.js';
+import { UsuarioService, type ActorEquipo } from './usuario.service.js';
 import { sendSuccess } from '../../shared/responses/api.response.js';
 import { BadRequestError } from '../../shared/errors/custom.error.js';
 
@@ -12,6 +12,14 @@ export class UsuarioController {
       throw new BadRequestError('Tu usuario no pertenece a ninguna organización.');
     }
     return organizacionId;
+  }
+
+  /**
+   * Quién hace la petición, para que el servicio pueda limitar lo que concede:
+   * nadie puede dar un acceso que él mismo no tiene.
+   */
+  private actor(req: Request): ActorEquipo {
+    return { rol: req.user!.rol, permisos: req.user!.permisos ?? null };
   }
 
   listar = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -27,7 +35,7 @@ export class UsuarioController {
   crear = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const organizacionId = this.organizacionDelActor(req);
-      const resultado = await this.usuarioService.crear(organizacionId, req.body);
+      const resultado = await this.usuarioService.crear(organizacionId, req.body, this.actor(req));
       sendSuccess(res, 'Miembro del equipo creado con éxito.', resultado, undefined, 201);
     } catch (error) {
       next(error);
@@ -38,7 +46,13 @@ export class UsuarioController {
     try {
       const organizacionId = this.organizacionDelActor(req);
       const actorId = req.user!.id;
-      const resultado = await this.usuarioService.actualizar(organizacionId, req.params.id, actorId, req.body);
+      const resultado = await this.usuarioService.actualizar(
+        organizacionId,
+        req.params.id,
+        actorId,
+        req.body,
+        this.actor(req)
+      );
       sendSuccess(res, 'Miembro del equipo actualizado con éxito.', resultado);
     } catch (error) {
       next(error);

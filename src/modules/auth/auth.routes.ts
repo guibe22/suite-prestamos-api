@@ -3,7 +3,7 @@ import { AuthController } from './auth.controller.js';
 import { validate } from '../../middlewares/validate.middleware.js';
 import { loginSchema, registerSchema, refreshSchema, sendCodeSchema, changePasswordSchema, configureOrganizationSchema, resetPasswordSchema, aceptarInvitacionSchema, eliminarCuentaSchema, googleAuthSchema } from './auth.schema.js';
 import { authMiddleware } from '../../middlewares/auth.middleware.js';
-import { checkRole } from '../../middlewares/permissions.middleware.js';
+import { checkPermission } from '../../middlewares/permissions.middleware.js';
 
 const router = Router();
 const controller = new AuthController();
@@ -125,10 +125,20 @@ router.post('/refresh', validate({ body: refreshSchema }), controller.refresh);
  *         description: Retorna el perfil del usuario
  */
 router.get('/profile', authMiddleware, controller.profile);
+/*
+ * Por permiso, no por rol: el sistema se gobierna por `Usuario.permisos` y el
+ * rol es solo el preset con el que se creó la cuenta. `equipo:gestionar` es el
+ * mismo permiso con el que la app y el panel abren la pantalla de ajustes, así
+ * que quien la ve puede guardarla.
+ *
+ * Esto NO quita acceso a los administradores (checkPermission deja pasar a
+ * ADMIN/SUPER_ADMIN siempre), pero sí a un GERENTE que no tenga el permiso
+ * concedido: su preset no lo incluye y antes entraba solo por llamarse así.
+ */
 router.post(
   '/configure-organization',
   authMiddleware,
-  checkRole(['ADMIN', 'SUPER_ADMIN', 'GERENTE']),
+  checkPermission('equipo:gestionar'),
   validate({ body: configureOrganizationSchema }),
   controller.configureOrganization
 );

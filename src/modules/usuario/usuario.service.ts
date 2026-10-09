@@ -10,6 +10,12 @@ import type { ActualizarUsuarioInput, CrearUsuarioInput, MiembroEquipoResponse }
 const ROLES_ADMINISTRABLES = ['COBRADOR', 'CAJERO', 'GERENTE'];
 const INVITACION_VIGENCIA_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** Quién hace la petición: su rol y sus permisos efectivos. */
+export interface ActorEquipo {
+  rol: string;
+  permisos?: string[] | null;
+}
+
 export class UsuarioService {
   private usuarioRepository = new UsuarioRepository();
   private suscripcionService = new SuscripcionService();
@@ -25,7 +31,13 @@ export class UsuarioService {
    * (POST /auth/aceptar-invitacion): el ADMIN nunca conoce ni asigna la
    * contraseña de otra persona.
    */
-  async crear(organizacionId: string, data: CrearUsuarioInput): Promise<MiembroEquipoResponse> {
+  async crear(
+    organizacionId: string,
+    data: CrearUsuarioInput,
+    actor?: ActorEquipo
+  ): Promise<MiembroEquipoResponse> {
+    this.verificarQuePuedeConceder(actor, data.rol, data.permisos);
+
     const cleanEmail = data.email.trim().toLowerCase();
 
     const existente = await this.usuarioRepository.findByEmail(cleanEmail);
@@ -99,10 +111,18 @@ export class UsuarioService {
     });
   }
 
-  async actualizar(organizacionId: string, id: string, actorId: string, data: ActualizarUsuarioInput): Promise<MiembroEquipoResponse> {
+  async actualizar(
+    organizacionId: string,
+    id: string,
+    actorId: string,
+    data: ActualizarUsuarioInput,
+    actor?: ActorEquipo
+  ): Promise<MiembroEquipoResponse> {
     if (data.nombre === undefined && data.rol === undefined && data.permisos === undefined && data.activo === undefined) {
       throw new BadRequestError('Debes enviar al menos un campo para actualizar.');
     }
+
+    this.verificarQuePuedeConceder(actor, data.rol, data.permisos);
 
     const usuario = await this.buscarMiembroAdministrable(organizacionId, id);
 
@@ -158,6 +178,37 @@ export class UsuarioService {
   async eliminar(organizacionId: string, id: string, actorId: string): Promise<void> {
     const usuario = await this.buscarMiembroAdministrable(organizacionId, id);
     await this.usuarioRepository.update(usuario.id, { deletedAt: new Date(), deletedBy: actorId });
+  }
+
+  /**
+   * Nadie concede lo que no tiene.
+   *
+   * Este módulo ya no exige ser ADMIN, sino el permiso `equipo:gestionar`, así
+   * que hay que cerrar el camino de escalada obvio: invitar a alguien (o a uno
+   * mismo con otro correo) como ADMIN, o regalarle permisos que el actor no
+   * posee. Los administradores siguen sin restricción.
+   */
+  private verificarQuePuedeConceder(
+    actor: ActorEquipo | undefined,
+    rol?: string,
+    permisos?: string[] | null
+  ): void {
+    if (!actor) return;
+    if (actor.rol === 'ADMIN' || actor.rol === 'SUPER_ADMIN') return;
+
+    if (rol && (rol === 'ADMIN' || rol === 'SUPER_ADMIN')) {
+      throw new ForbiddenError('Solo un administrador puede asignar el rol de administrador.');
+    }
+
+    if (permisos && permisos.length > 0) {
+      const propios = new Set(resolverPermisosUsuario(actor.rol, actor.permisos));
+      const ajenos = permisos.filter((permiso) => !propios.has(permiso));
+      if (ajenos.length > 0) {
+        throw new ForbiddenError(
+          `No puedes conceder permisos que tú no tienes: ${ajenos.join(', ')}.`
+        );
+      }
+    }
   }
 
   private async buscarMiembroAdministrable(organizacionId: string, id: string) {

@@ -3,13 +3,23 @@ import { UsuarioController } from './usuario.controller.js';
 import { validate } from '../../middlewares/validate.middleware.js';
 import { crearUsuarioSchema, actualizarUsuarioSchema, idParamSchema } from './usuario.schema.js';
 import { authMiddleware } from '../../middlewares/auth.middleware.js';
-import { checkRole } from '../../middlewares/permissions.middleware.js';
+import { checkPermission } from '../../middlewares/permissions.middleware.js';
 import { requireActiveSubscription } from '../../middlewares/suscripcion.middleware.js';
 
 const router = Router();
 const controller = new UsuarioController();
 
-router.use(authMiddleware, checkRole(['ADMIN', 'SUPER_ADMIN']));
+/*
+ * Gestionar el equipo es un permiso, no un rol: `equipo:gestionar` ("Invitar y
+ * configurar permisos de miembros") es justo lo que describe este módulo. Antes
+ * exigía ser ADMIN, así que alguien con el permiso concedido veía la pantalla en
+ * la app y recibía un 403 al tocar cualquier cosa.
+ *
+ * Quien lo tenga sin ser administrador no puede escalar: `buscarMiembroAdministrable`
+ * ya impide tocar a un ADMIN, y el servicio no deja conceder ni el rol de
+ * administrador ni permisos que el propio actor no tenga.
+ */
+router.use(authMiddleware, checkPermission('equipo:gestionar'));
 
 /**
  * @swagger
