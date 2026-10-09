@@ -35,12 +35,29 @@ export class ConfiguracionService {
   }
 
   /**
-   * Subconjunto público (sin auth) para que la app pueda comprobar la
-   * versión mínima incluso antes de iniciar sesión — el resto de esta
-   * configuración (enforcement de suscripciones) no se expone aquí.
+   * Subconjunto público (sin auth): lo que necesitan la app y la web pública
+   * antes de que haya una sesión.
+   *
+   * - `minVersionApp` lo consulta la app para el chequeo de versión.
+   * - El contacto de soporte lo pinta la página `/contacto` de la web. Son
+   *   datos de publicación —el mismo teléfono y correo que el middleware de
+   *   suscripción ya le muestra a cualquier usuario bloqueado—, así que
+   *   exponerlos aquí no revela nada nuevo; lo que no sale es el resto de la
+   *   configuración (enforcement de suscripciones, umbrales).
+   *
+   * Pueden venir a `null`: la web omite la línea en vez de inventar un
+   * sustituto plausible.
    */
-  async obtenerPublica(): Promise<{ minVersionApp: string | null }> {
+  async obtenerPublica(): Promise<{
+    minVersionApp: string | null;
+    soporteTelefono: string | null;
+    soporteEmail: string | null;
+  }> {
     const config = await this.obtener();
-    return { minVersionApp: config.minVersionApp };
+    return {
+      minVersionApp: config.minVersionApp,
+      soporteTelefono: config.soporteTelefono,
+      soporteEmail: config.soporteEmail,
+    };
   }
 }

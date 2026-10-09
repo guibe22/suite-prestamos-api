@@ -12,7 +12,7 @@ const controller = new ConfiguracionController();
  * @swagger
  * /configuracion/publica:
  *   get:
- *     summary: Subconjunto público (sin auth) — hoy solo minVersionApp, para el chequeo de versión antes de iniciar sesión
+ *     summary: Subconjunto público (sin auth) — minVersionApp para el chequeo de versión de la app, y el contacto de soporte que pinta la web pública
  *     tags: [Configuracion]
  *     responses:
  *       200:
