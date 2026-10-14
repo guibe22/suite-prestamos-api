@@ -1,7 +1,6 @@
 import { prisma } from '../../config/database.js';
 import { NotFoundError } from '../../shared/errors/custom.error.js';
 import { esRolRestringidoPorRuta, rutaAccessFilter } from '../../shared/access/ruta-scope.js';
-import { calcularCargoMora } from '../../workers/mora-recalc.worker.js';
 
 export class PagoService {
   /**
@@ -271,34 +270,23 @@ export class PagoService {
     const totalPagado = montoInicialPagado + pagosVigentes.reduce((sum: number, p: any) => sum + Number(p.monto), 0);
     const liquidado = totalLoanValue - totalPagado <= 0.05;
 
-    // Recalcular la mora desde cero sobre las cuotas que quedan PENDIENTE tras
-    // este borrado, en vez de "restituir" sumando `pagoEliminado.moraCobrada`
-    // sobre el valor actual. La suma parecía correcta pero no lo era: al
-    // resetear `moraFechaCalculo` a null, el worker nocturno (mora-recalc.worker.ts)
-    // trata el préstamo como si "nunca hubiera devengado" y le vuelve a cobrar
-    // TODO el atraso desde el vencimiento de la cuota hasta hoy, sumándolo
-    // (increment) sobre lo ya restituido — duplicando la mora del período que
-    // ya se había cubierto. Recalcular aquí con la misma fórmula que usa el
-    // worker para un préstamo nuevo (`diasDesdeUltimoCargo = Infinity`) da el
-    // valor correcto de una sola vez, y fijar `moraFechaCalculo` a ahora evita
-    // que el worker lo vuelva a recomputar desde el vencimiento.
-    const finanzas = (prestamo as any)?.cliente?.organizacion?.configuracion?.finanzas;
-    const cuotasPendientesParaMora = cuotasCalculadas
-      .filter((c: any) => c.montoTotal - c.montoPagado > 0.05)
-      .map((c: any) => {
-        const fechaVencimiento = cuotasPorId.get(c.id)?.fechaVencimiento;
-        return fechaVencimiento ? { fechaVencimiento, montoTotal: c.montoTotal, montoPagado: c.montoPagado } : null;
-      })
-      .filter((c: any): c is { fechaVencimiento: Date; montoTotal: number; montoPagado: number } => !!c);
-    let nuevaMoraAcumulada: number;
+    // Mora: se RESTITUYE solo la mora que había cobrado el pago eliminado,
+    // sobre el valor actual (mismo criterio que `eliminarPagoLocal` en la app).
+    //
+    // Antes, con tasaMora configurada, se recalculaba desde cero
+    // (`calcularCargoMora(..., Infinity)`: saldo pendiente × todos los días
+    // desde el vencimiento) y se REEMPLAZABA moraAcumulada. Eso ignoraba la
+    // mora ya cobrada por los pagos que siguen vigentes y las exoneraciones
+    // del admin: borrar cualquier pago (aunque no tuviera mora) volvía a
+    // cargarle al cliente mora que ya había pagado o que se le había perdonado.
+    //
+    // La duplicación que motivó aquel recálculo venía de dejar
+    // `moraFechaCalculo` en null (el worker devengaba otra vez todo el atraso
+    // desde el vencimiento). Fijarlo a ahora —abajo— basta para evitarla: el
+    // worker solo suma los días posteriores (`diasPendientesDeDevengo`).
     const moraRevertida = Number(pagoEliminado?.moraCobrada || 0);
     const moraActual = Number(prestamo.moraAcumulada || 0);
-
-    if (finanzas?.tasaMora && parseFloat(finanzas.tasaMora) > 0) {
-      nuevaMoraAcumulada = calcularCargoMora(cuotasPendientesParaMora, finanzas, Infinity);
-    } else {
-      nuevaMoraAcumulada = Math.max(0, moraActual + moraRevertida);
-    }
+    const nuevaMoraAcumulada = Math.max(0, moraActual + moraRevertida);
 
     // CANCELADO es un estado terminal manual (ej. refinanciación) distinto de
     // LIQUIDADO; el préstamo conserva su historial de pagos, así que sin esta
