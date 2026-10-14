@@ -1,5 +1,5 @@
 import { prisma } from '../../config/database.js';
-import { NotFoundError } from '../../shared/errors/custom.error.js';
+import { ConflictError, NotFoundError } from '../../shared/errors/custom.error.js';
 import { PagoService } from '../pago/pago.service.js';
 import { getPagination, getPaginationMeta } from '../../utils/pagination.js';
 import type { actualizarSuscripcionOrgSchema, listarOrganizacionesQuerySchema } from './admin-organizacion.schema.js';
@@ -794,6 +794,126 @@ export class AdminOrganizacionService {
           })),
         })),
       })),
+    };
+  }
+
+  /**
+   * Clientes borrados (soft-delete) de la organización, los más recientes
+   * primero, con lo necesario para decidir si restaurarlos: quién y cuándo lo
+   * borró, y si dejó préstamos activos huérfanos (con su saldo pendiente).
+   */
+  async listarClientesEliminados(organizacionId: string, search?: string) {
+    const org = await prisma.organizacion.findUnique({ where: { id: organizacionId } });
+    if (!org) throw new NotFoundError('La organización no existe.');
+
+    const termino = search?.trim();
+    const clientes = await prisma.cliente.findMany({
+      where: {
+        organizacionId,
+        deletedAt: { not: null },
+        ...(termino
+          ? {
+              OR: [
+                { nombres: { contains: termino, mode: 'insensitive' } },
+                { apellidos: { contains: termino, mode: 'insensitive' } },
+                { codigo: { contains: termino, mode: 'insensitive' } },
+                { identificacion: { contains: termino, mode: 'insensitive' } },
+                { telefono: { contains: termino } },
+              ],
+            }
+          : {}),
+      },
+      orderBy: { deletedAt: 'desc' },
+      take: 100,
+      select: {
+        id: true,
+        codigo: true,
+        nombres: true,
+        apellidos: true,
+        identificacion: true,
+        telefono: true,
+        deletedAt: true,
+        deletedBy: true,
+        ruta: { select: { nombre: true, deletedAt: true } },
+        prestamos: {
+          where: { deletedAt: null, estado: { notIn: ['LIQUIDADO', 'CANCELADO'] } },
+          select: {
+            codigo: true,
+            cuotas: { where: { deletedAt: null }, select: { montoTotal: true, montoPagado: true } },
+          },
+        },
+      },
+    });
+
+    const idsQueBorraron = [...new Set(clientes.map((c) => c.deletedBy).filter((id): id is string => !!id))];
+    const usuarios = idsQueBorraron.length
+      ? await prisma.usuario.findMany({ where: { id: { in: idsQueBorraron } }, select: { id: true, nombre: true } })
+      : [];
+    const nombreUsuario = new Map(usuarios.map((u) => [u.id, u.nombre]));
+
+    return clientes.map((c) => ({
+      id: c.id,
+      codigo: c.codigo,
+      nombre: `${c.nombres} ${c.apellidos ?? ''}`.trim(),
+      identificacion: c.identificacion,
+      telefono: c.telefono,
+      rutaNombre: c.ruta?.nombre ?? null,
+      rutaEliminada: !!c.ruta?.deletedAt,
+      eliminadoEl: c.deletedAt,
+      eliminadoPor: c.deletedBy ? (nombreUsuario.get(c.deletedBy) ?? 'Usuario desconocido') : null,
+      prestamosActivos: c.prestamos.map((p) => p.codigo),
+      saldoPendiente: c.prestamos.reduce(
+        (sum, p) =>
+          sum + p.cuotas.reduce((s, cu) => s + Math.max(0, Number(cu.montoTotal) - Number(cu.montoPagado)), 0),
+        0
+      ),
+    }));
+  }
+
+  /**
+   * Restaura un cliente borrado (deletedAt → null). Se le actualiza el
+   * `updatedAt` para que el próximo pull se lo mande a los dispositivos en
+   * `updated[]` y WatermelonDB lo vuelva a crear localmente. Sus préstamos no
+   * hace falta tocarlos: el borrado de un cliente nunca los borró.
+   */
+  async restaurarCliente(organizacionId: string, clienteId: string, adminUserId: string) {
+    const cliente = await prisma.cliente.findFirst({
+      where: { id: clienteId, organizacionId },
+      include: { ruta: { select: { nombre: true, deletedAt: true } } },
+    });
+    if (!cliente) throw new NotFoundError('El cliente no existe en esta organización.');
+    const borradoEl = cliente.deletedAt;
+    if (!borradoEl) throw new ConflictError('Este cliente no está eliminado.');
+    // Cliente.rutaId es obligatoria: restaurarlo en una ruta borrada lo dejaría
+    // invisible igual (ningún cobrador la tiene) y el push lo rechazaría.
+    if (cliente.ruta?.deletedAt) {
+      throw new ConflictError(
+        `La ruta del cliente ("${cliente.ruta.nombre}") también está eliminada. Restaura o reasigna la ruta antes de restaurar al cliente.`
+      );
+    }
+
+    await prisma.$transaction(async (tx: any) => {
+      await tx.cliente.update({
+        where: { id: clienteId },
+        data: { deletedAt: null, deletedBy: null, updatedAt: new Date() },
+      });
+      await tx.auditoria.create({
+        data: {
+          usuarioId: adminUserId,
+          accion: 'RESTORE',
+          tabla: 'clientes',
+          registroId: clienteId,
+          valoresAnteriores: { deletedAt: borradoEl.toISOString(), deletedBy: cliente.deletedBy },
+          valoresNuevos: { deletedAt: null, deletedBy: null },
+        },
+      });
+    });
+
+    const nombre = `${cliente.nombres} ${cliente.apellidos ?? ''}`.trim();
+    return {
+      clienteId,
+      codigo: cliente.codigo,
+      mensaje: `Cliente ${nombre} (${cliente.codigo}) restaurado. Aparecerá en los teléfonos en su próxima sincronización.`,
     };
   }
 

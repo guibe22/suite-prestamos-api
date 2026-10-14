@@ -85,6 +85,25 @@ export class AdminOrganizacionController {
     }
   };
 
+  listarClientesEliminados = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+      const clientes = await this.service.listarClientesEliminados(req.params.id, search);
+      sendSuccess(res, 'Clientes eliminados recuperados con éxito.', clientes);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  restaurarCliente = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const resultado = await this.service.restaurarCliente(req.params.id, req.params.clienteId, req.user!.id);
+      sendSuccess(res, resultado.mensaje, resultado);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   listarRutas = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const rutas = await this.service.listarRutas(req.params.id);

@@ -112,7 +112,10 @@ async function recalcularMoraOrganizacion(): Promise<void> {
   // Cargar todos los préstamos ACTIVOS con sus cuotas PENDIENTE y la config
   // de la organización en una sola consulta (evita N+1).
   const prestamos = await prisma.prestamo.findMany({
-    where: { estado: 'ACTIVO', deletedAt: null },
+    // Sin préstamos de clientes borrados: antes de bloquear ese borrado, quedaron
+    // préstamos huérfanos ACTIVO a los que el worker les seguía sumando mora
+    // cada noche aunque nadie pudiera verlos ni cobrarlos en la app.
+    where: { estado: 'ACTIVO', deletedAt: null, cliente: { deletedAt: null } },
     select: {
       id: true,
       moraAcumulada: true,

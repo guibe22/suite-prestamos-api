@@ -42,6 +42,16 @@ export const jornadaParamsSchema = z.object({
   jornadaId: z.string().min(1, 'El id de la jornada es obligatorio.'),
 });
 
+// Los clientes también nacen en la app con ids de WatermelonDB (no uuid).
+export const clienteParamsSchema = z.object({
+  id: z.string().uuid('El id de la organización no es válido.'),
+  clienteId: z.string().min(1, 'El id del cliente es obligatorio.'),
+});
+
+export const clientesEliminadosQuerySchema = z.object({
+  search: z.string().trim().max(100).optional(),
+});
+
 // Igual que jornadaParamsSchema: los préstamos también tienen ids de WatermelonDB.
 export const prestamoParamsSchema = z.object({
   id: z.string().uuid('El id de la organización no es válido.'),

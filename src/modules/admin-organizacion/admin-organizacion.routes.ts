@@ -8,6 +8,8 @@ import {
   idParamSchema,
   jornadaParamsSchema,
   prestamoParamsSchema,
+  clienteParamsSchema,
+  clientesEliminadosQuerySchema,
   listarOrganizacionesQuerySchema,
 } from './admin-organizacion.schema.js';
 
@@ -111,6 +113,51 @@ router.delete('/:id/registros', validate({ params: idParamSchema }), controller.
 router.get('/:id/exportar', validate({ params: idParamSchema }), controller.exportarDatos);
 router.post('/:id/importar', validate({ params: idParamSchema }), controller.importarDatos);
 router.get('/:id/rutas', validate({ params: idParamSchema }), controller.listarRutas);
+
+/**
+ * @swagger
+ * /admin/organizaciones/{id}/clientes-eliminados:
+ *   get:
+ *     summary: Clientes borrados de la organización, con sus préstamos activos huérfanos — solo SUPER_ADMIN
+ *     tags: [AdminOrganizacion]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Lista de clientes eliminados (máx. 100, más recientes primero)
+ */
+router.get(
+  '/:id/clientes-eliminados',
+  validate({ params: idParamSchema, query: clientesEliminadosQuerySchema }),
+  controller.listarClientesEliminados
+);
+
+/**
+ * @swagger
+ * /admin/organizaciones/{id}/clientes/{clienteId}/restaurar:
+ *   post:
+ *     summary: Restaura un cliente borrado para que vuelva a los dispositivos — solo SUPER_ADMIN
+ *     tags: [AdminOrganizacion]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Cliente restaurado
+ *       404:
+ *         description: El cliente no existe en esta organización
+ *       409:
+ *         description: El cliente no está eliminado o su ruta también lo está
+ */
+router.post(
+  '/:id/clientes/:clienteId/restaurar',
+  validate({ params: clienteParamsSchema }),
+  controller.restaurarCliente
+);
 
 /**
  * @swagger

@@ -668,6 +668,56 @@ export class SincronizacionService {
   }
 
   /**
+   * Un cliente con préstamos activos no se borra: el borrado no arrastra sus
+   * préstamos, que quedaban huérfanos (invisibles en la app, con saldo sin
+   * cobrar y el worker sumándoles mora). La app nueva ya lo impide; esto cubre
+   * versiones viejas y el panel web.
+   *
+   * A diferencia de las rutas, NO se rechaza el push entero: un dispositivo que
+   * ya borró localmente a ese cliente reenviaría el mismo borrado en cada sync
+   * y quedarían trabados también sus cobros pendientes. En vez de eso se
+   * descarta solo ese borrado y se le sube el `updatedAt` al cliente, para que
+   * el próximo pull se lo devuelva al dispositivo (WatermelonDB recrea el
+   * registro que le llega en `updated[]` aunque ya no exista localmente).
+   *
+   * Devuelve los ids que sí se pueden borrar.
+   */
+  private async descartarBorradoDeClientesConPrestamosActivos(
+    tx: any,
+    idsCliente: string[],
+    prestamosBorradosEnEstePush: string[],
+    organizacionId: string
+  ): Promise<string[]> {
+    const conPrestamosActivos = await tx.cliente.findMany({
+      where: {
+        id: { in: idsCliente },
+        organizacionId,
+        deletedAt: null,
+        prestamos: {
+          some: {
+            deletedAt: null,
+            estado: { notIn: ['LIQUIDADO', 'CANCELADO'] },
+            id: { notIn: prestamosBorradosEnEstePush },
+          },
+        },
+      },
+      select: { id: true, codigo: true },
+    });
+    if (conPrestamosActivos.length === 0) return idsCliente;
+
+    const protegidos = new Set(conPrestamosActivos.map((c: any) => c.id));
+    await tx.cliente.updateMany({
+      where: { id: { in: [...protegidos] } },
+      data: { updatedAt: new Date() },
+    });
+    logger.warn(
+      `⚠️  [SYNC PUSH] Se ignoró el borrado de ${protegidos.size} cliente(s) con préstamos activos ` +
+        `(${conPrestamosActivos.map((c: any) => c.codigo).join(', ')}); se reenviarán al dispositivo en el próximo pull.`
+    );
+    return idsCliente.filter((id) => !protegidos.has(id));
+  }
+
+  /**
    * Préstamos YA existentes en el servidor (y dentro del alcance del usuario)
    * que este push toca por el lado del cobro —pagos creados/editados/borrados
    * o cuotas editadas— junto con su base de cuotas pagadas de inicio, calculada
@@ -907,13 +957,23 @@ export class SincronizacionService {
         }
         const tableChanges = changes[table.name];
         if (tableChanges && tableChanges.deleted.length > 0) {
-          const idsToDelete = tableChanges.deleted;
+          let idsToDelete = tableChanges.deleted;
           const modelTx = (tx as any)[this.getModelName(table.name)];
           // El `where` se restringe a la organización (y, si es COBRADOR, a su
           // ruta asignada): un id fuera de ese alcance simplemente no coincide
           // (0 filas afectadas), en vez de permitir un borrado cross-tenant o
           // cross-ruta.
           const orgScope = this.scopeWhere(table.name, organizacionId, userId, userRol);
+
+          if (table.name === 'clientes') {
+            idsToDelete = await this.descartarBorradoDeClientesConPrestamosActivos(
+              tx,
+              idsToDelete,
+              changes.prestamos?.deleted ?? [],
+              organizacionId
+            );
+            if (idsToDelete.length === 0) continue;
+          }
 
           // Borrado lógico actualizando el campo deletedAt, salvo en las tablas
           // que no tienen esa columna (movimientoCaja, y referencias/aval/
