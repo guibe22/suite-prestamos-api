@@ -40,6 +40,8 @@ model Organizacion {
 
   suscripcion    Suscripcion?
   notificaciones Notificacion[]
+
+  eventosUbicacion EventoUbicacion[]
 }
 
 /// Catálogo de planes de suscripción. Editable vía seed/admin sin tocar
@@ -309,6 +311,8 @@ model Usuario {
   dispositivosPush        DispositivoPush[]
   notificaciones          Notificacion[]
   preferenciaNotificacion PreferenciaNotificacion?
+
+  eventosUbicacion EventoUbicacion[]
 }
 
 enum EstadoCliente {
@@ -824,4 +828,40 @@ model PreferenciaNotificacion {
   vibracion Boolean @default(true)
 
   updatedAt DateTime @updatedAt
+}
+
+/// Estado de la ubicación en el teléfono del cobrador (ver
+/// `src/modules/telemetria/telemetria.types.ts#ESTADOS_UBICACION`).
+enum EstadoUbicacion {
+  OK
+  SIN_RESPUESTA
+  PERMISO_DENEGADO
+  PERMISO_BLOQUEADO
+  PERMISO_REVOCADO
+  GPS_APAGADO
+  UBICACION_APROXIMADA
+  UBICACION_FALSA
+}
+
+/// Cambios de estado de la ubicación del cobrador (GPS apagado, permiso
+/// quitado, GPS falso...). Historial auditable: sirve de evidencia en disputas
+/// ("sí pasé por ahí"). Solo se escribe una fila cuando el estado CAMBIA, no
+/// por cada ping.
+model EventoUbicacion {
+  id             String       @id @default(uuid())
+  organizacionId String
+  organizacion   Organizacion @relation(fields: [organizacionId], references: [id], onDelete: Cascade)
+  usuarioId      String
+  usuario        Usuario      @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  estado EstadoUbicacion
+  /// Cuándo lo detectó el teléfono (puede ser anterior a la llegada del ping).
+  desde  DateTime
+  /// Cuándo pasó a otro estado; null = sigue vigente.
+  hasta  DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizacionId, desde])
+  @@index([usuarioId, desde])
 }

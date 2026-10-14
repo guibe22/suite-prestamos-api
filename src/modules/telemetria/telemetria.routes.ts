@@ -13,4 +13,7 @@ router.post('/ping', controller.ping);
 // Consulta de cobradores activos para el radar satelital web
 router.get('/activos', controller.listarActivos);
 
+// Cambios de estado de la ubicación del cobrador (GPS apagado, permiso quitado, GPS falso)
+router.get('/eventos', controller.listarEventos);
+
 export default router;
