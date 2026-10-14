@@ -19,7 +19,8 @@ export interface TelemetriaCobradorRecord {
   longitud: number;
   rumbo: number;
   velocidadKmH: number;
-  bateria: number;
+  /** 0–100, o `null` si el dispositivo no lo reportó. */
+  bateria: number | null;
   estado: string;
   rutaId: string;
   rutaNombre: string;

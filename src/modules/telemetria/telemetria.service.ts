@@ -2,6 +2,17 @@ import { logger } from '../../config/logger.js';
 import { prisma } from '../../config/database.js';
 import type { TelemetriaPingInput, TelemetriaCobradorRecord } from './telemetria.types.js';
 
+/**
+ * Nivel de batería 0–100 o `null` si el dispositivo no lo reportó (o llegó
+ * algo no numérico). No se inventa un 100: el panel muestra "No disponible".
+ */
+function normalizarBateria(valor: unknown): number | null {
+  if (valor === undefined || valor === null || valor === '') return null;
+  const n = Number(valor);
+  if (!Number.isFinite(n)) return null;
+  return Math.min(100, Math.max(0, Math.round(n)));
+}
+
 export class TelemetriaService {
   // Store en memoria de alta velocidad: cero llamadas a disco por ping, latencia <1ms
   private static store = new Map<string, TelemetriaCobradorRecord>();
@@ -37,7 +48,7 @@ export class TelemetriaService {
       longitud: Number(input.longitud),
       rumbo: Number(input.rumbo || 0),
       velocidadKmH: Math.max(0, Math.round(Number(input.velocidadKmH || 0))),
-      bateria: Math.min(100, Math.max(0, Math.round(Number(input.bateria ?? 100)))),
+      bateria: normalizarBateria(input.bateria),
       estado: input.estado || 'EN_RUTA',
       rutaId: input.rutaId || record?.rutaId || '',
       rutaNombre: input.rutaNombre || record?.rutaNombre || 'Ruta en Curso',
