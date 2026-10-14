@@ -166,22 +166,15 @@ async function main() {
     if (isApply) {
       try {
         await prisma.$transaction(async (tx: any) => {
+          // Base EXPLÍCITA (Σ de las primeras N cuotas). Antes se marcaban esas
+          // N cuotas PAGADA y luego recalcularPrestamo deducía la base como
+          // Σcuotas − Σpagos: con pagos vigentes la base quedaba en 0 y la
+          // "reparación" borraba las cuotas pagadas de inicio.
           if (cuotasInicialesUsar > 0) {
-            for (let i = 0; i < cuotas.length; i++) {
-              const c = cuotas[i];
-              const yaPagadaInicial = i < cuotasInicialesUsar;
-              await tx.cuota.update({
-                where: { id: c.id },
-                data: {
-                  montoPagado: yaPagadaInicial ? c.montoTotal : 0,
-                  estado: yaPagadaInicial ? 'PAGADA' : 'PENDIENTE',
-                  fechaPago: yaPagadaInicial ? c.fechaVencimiento : null,
-                },
-              });
-            }
+            await pagoService.recalcularPrestamoAdminTx(tx, p.id, cuotasInicialesUsar);
+          } else {
+            await pagoService.recalcularPrestamo(tx, p.id);
           }
-
-          await pagoService.recalcularPrestamo(tx, p.id);
         });
         reparados++;
         console.log(`   ✅ REPARADO Y RESTAURADO EN BASE DE DATOS ÉXITOSAMENTE.`);

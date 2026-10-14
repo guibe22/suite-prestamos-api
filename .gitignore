@@ -36,3 +36,6 @@ storage/clientes/*
 *.njsproj
 *.sln
 *.sw?
+
+# Reportes de diagnóstico (contienen datos de clientes)
+reportes/

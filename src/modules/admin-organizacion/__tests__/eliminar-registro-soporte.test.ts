@@ -49,6 +49,7 @@ describe('AdminOrganizacionService.eliminarRegistroSoporte', () => {
     vi.clearAllMocks();
     mockPrisma.$transaction.mockImplementation(async (cb: any) => cb(mockTx));
     mockPrisma.organizacion.findUnique.mockResolvedValue({ id: 'org-1' });
+    mockTx.pago.updateMany.mockResolvedValue({ count: 1 });
   });
 
   describe('tipo PAGO', () => {
@@ -66,8 +67,8 @@ describe('AdminOrganizacionService.eliminarRegistroSoporte', () => {
 
       await service.eliminarRegistroSoporte('org-1', 'PAGO', 'pg-1', 'admin-1');
 
-      expect(mockTx.pago.update).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: 'pg-1' } })
+      expect(mockTx.pago.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'pg-1', deletedAt: null } })
       );
       // El recálculo recibe el pago eliminado: `recalcularPrestamo` lo necesita
       // para no descontar dos veces la base de cuotas pagadas de inicio.
@@ -104,6 +105,18 @@ describe('AdminOrganizacionService.eliminarRegistroSoporte', () => {
       expect(recalcs.recalcularPrestamo).toHaveBeenCalledOnce();
       expect(recalcs.recalcularEfectivoCobradoJornada).not.toHaveBeenCalled();
       expect(recalcs.recalcularClientesVisitadosJornada).not.toHaveBeenCalled();
+    });
+
+    it('un borrado concurrente que ya llegó tarde no recalcula de nuevo', async () => {
+      mockPrisma.pago.findFirst.mockResolvedValue(pago);
+      // Otro borrado del mismo pago ganó la carrera dentro de su transacción.
+      mockTx.pago.updateMany.mockResolvedValue({ count: 0 });
+
+      await service.eliminarRegistroSoporte('org-1', 'PAGO', 'pg-1', 'admin-1');
+
+      expect(recalcs.recalcularPrestamo).not.toHaveBeenCalled();
+      expect(recalcs.recalcularClientesVisitadosJornada).not.toHaveBeenCalled();
+      expect(mockTx.auditoria.create).not.toHaveBeenCalled();
     });
 
     it('rechaza un pago de otra organización (o ya borrado) sin escribir nada', async () => {

@@ -668,6 +668,64 @@ export class SincronizacionService {
   }
 
   /**
+   * Préstamos YA existentes en el servidor (y dentro del alcance del usuario)
+   * que este push toca por el lado del cobro —pagos creados/editados/borrados
+   * o cuotas editadas— junto con su base de cuotas pagadas de inicio, calculada
+   * sobre el estado del servidor ANTES de aplicar nada del push. Los préstamos
+   * nuevos de este mismo push no se incluyen: sus cuotas y pagos vienen juntos
+   * del mismo dispositivo y ya son coherentes entre sí.
+   */
+  private async basesDePrestamosConCambiosDeCobro(
+    tx: any,
+    changes: WatermelonChanges,
+    organizacionId: string,
+    userId: string,
+    userRol: string
+  ): Promise<Map<string, number>> {
+    const ids = new Set<string>();
+    const pagos = changes.pagos;
+    const cuotas = changes.cuotas;
+
+    for (const item of [...(pagos?.created ?? []), ...(pagos?.updated ?? [])]) {
+      const prestamoId = this.mapClientDataToPrisma(item)?.prestamoId;
+      if (prestamoId) ids.add(prestamoId);
+    }
+    for (const item of cuotas?.created ?? []) {
+      const prestamoId = this.mapClientDataToPrisma(item)?.prestamoId;
+      if (prestamoId) ids.add(prestamoId);
+    }
+
+    const pagosBorrados = pagos?.deleted ?? [];
+    if (pagosBorrados.length > 0) {
+      const filas = await tx.pago.findMany({
+        where: { id: { in: pagosBorrados }, ...this.scopeWhere('pagos', organizacionId, userId, userRol) },
+        select: { prestamoId: true },
+      });
+      filas.forEach((f: any) => ids.add(f.prestamoId));
+    }
+    const cuotasEditadas = (cuotas?.updated ?? []).map((c: any) => c.id).filter(Boolean);
+    if (cuotasEditadas.length > 0) {
+      const filas = await tx.cuota.findMany({
+        where: { id: { in: cuotasEditadas }, ...this.scopeWhere('cuotas', organizacionId, userId, userRol) },
+        select: { prestamoId: true },
+      });
+      filas.forEach((f: any) => ids.add(f.prestamoId));
+    }
+
+    const bases = new Map<string, number>();
+    if (ids.size === 0) return bases;
+
+    const existentes = await tx.prestamo.findMany({
+      where: { id: { in: [...ids] }, ...this.scopeWhere('prestamos', organizacionId, userId, userRol) },
+      select: { id: true },
+    });
+    for (const { id } of existentes) {
+      bases.set(id, await this.pagoService.calcularBaseInicial(tx, id));
+    }
+    return bases;
+  }
+
+  /**
    * Push: Aplica los cambios enviados por el cliente al servidor en una sola transaccion
    */
   async push(
@@ -779,6 +837,17 @@ export class SincronizacionService {
           );
         }
       }
+
+      // Préstamos cuyas cuotas el servidor va a reconstruir al final del push
+      // (ver el bloque 3 más abajo), con su base de cuotas pagadas de inicio
+      // tomada AHORA, antes de que los cambios del dispositivo la ensucien.
+      const basesPrestamosAfectados = await this.basesDePrestamosConCambiosDeCobro(
+        tx,
+        changes,
+        organizacionId,
+        userId,
+        userRol
+      );
 
       // 1. Procesar Eliminaciones (de atrás hacia adelante en orden para evitar romper FKs en cascada)
       for (const table of [...tableOrder].reverse()) {
@@ -1228,6 +1297,20 @@ export class SincronizacionService {
             await modelTx.update({ where: { id }, data: dataWithoutId });
           }
         }
+      }
+
+      // 3. Reconstruir las cuotas de los préstamos con cobros nuevos/borrados
+      // desde sus pagos vigentes. Las cuotas que manda el dispositivo son SU
+      // vista, y se aplicaban por "último en escribir gana":
+      // - al borrar un pago, el servidor redistribuía cronológicamente pero
+      //   después las cuotas del dispositivo (que revierte solo las cuotas de
+      //   ESE pago) pisaban ese recálculo: c1 y c2 quedaban en 0 con P2 vigente;
+      // - dos dispositivos cobrando offline el mismo préstamo dejaban 2 pagos
+      //   pero una sola cuota cubierta (cada uno escribía la misma cuota).
+      // Los pagos sí llegan todos; las cuotas se derivan de ellos aquí, y el
+      // próximo pull les baja a los dispositivos el resultado.
+      for (const [prestamoId, base] of basesPrestamosAfectados) {
+        await this.pagoService.redistribuirCuotas(tx, prestamoId, base);
       }
     });
 

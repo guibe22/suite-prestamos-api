@@ -1,6 +1,7 @@
 import { prisma } from '../../config/database.js';
 import { NotFoundError } from '../../shared/errors/custom.error.js';
 import { esRolRestringidoPorRuta, rutaAccessFilter } from '../../shared/access/ruta-scope.js';
+import { baseInicialImplicita, distribuirEnCuotas, TOLERANCIA_CUOTA_PAGADA } from './redistribucion.js';
 
 export class PagoService {
   /**
@@ -29,10 +30,15 @@ export class PagoService {
     }
 
     await prisma.$transaction(async (tx: any) => {
-      await tx.pago.update({
-        where: { id },
+      // Condicionado a `deletedAt: null` DENTRO de la transacción: el findFirst
+      // de arriba corre fuera de ella, así que dos DELETE simultáneos del mismo
+      // pago (doble tap, reintento tras timeout) pasaban ambos y recalculaban
+      // dos veces. El segundo ahora es un no-op.
+      const { count } = await tx.pago.updateMany({
+        where: { id, deletedAt: null },
         data: { deletedAt: new Date(), deletedBy: actorId },
       });
+      if (count === 0) return;
 
       // El DELETE directo (el que realmente usa la app) no dejaba rastro en
       // Auditoria; solo el camino de sync lo hacía. Se captura el estado
@@ -81,27 +87,36 @@ export class PagoService {
     }
 
     await prisma.$transaction(async (tx: any) => {
-      if (typeof cuotasIniciales === 'number' && cuotasIniciales >= 0) {
-        const cuotas = await tx.cuota.findMany({
-          where: { prestamoId, deletedAt: null },
-          orderBy: { numeroCuota: 'asc' },
-        });
-        for (let i = 0; i < cuotas.length; i++) {
-          const c = cuotas[i];
-          const yaPagadaInicial = i < cuotasIniciales;
-          await tx.cuota.update({
-            where: { id: c.id },
-            data: {
-              montoPagado: yaPagadaInicial ? c.montoTotal : 0,
-              estado: yaPagadaInicial ? 'PAGADA' : 'PENDIENTE',
-              fechaPago: yaPagadaInicial ? c.fechaVencimiento : null,
-            },
-          });
-        }
-      }
-
-      await this.recalcularPrestamo(tx, prestamoId);
+      await this.recalcularPrestamoAdminTx(tx, prestamoId, cuotasIniciales);
     });
+  }
+
+  /**
+   * Igual que `recalcularPrestamoAdmin` pero dentro de una transacción ya
+   * abierta. Existe porque el editor de préstamos del panel admin
+   * (admin-organizacion.service.ts) llamaba a `recalcularPrestamoAdmin` DENTRO
+   * de su propia transacción: eran dos transacciones sobre la misma fila del
+   * préstamo, se esperaban entre sí hasta el timeout y se perdían las
+   * ediciones del admin.
+   *
+   * Con `cuotasIniciales` la base se fija EXPLÍCITAMENTE (Σ montoTotal de las
+   * primeras N cuotas). Antes se ponían esas N cuotas en PAGADA y el resto en
+   * 0, y luego `recalcularPrestamo` "deducía" la base como Σcuotas − Σpagos:
+   * con pagos vigentes eso restaba los pagos de la base y la dejaba en 0.
+   */
+  async recalcularPrestamoAdminTx(tx: any, prestamoId: string, cuotasIniciales?: number): Promise<void> {
+    if (typeof cuotasIniciales === 'number' && cuotasIniciales >= 0) {
+      const cuotas = await tx.cuota.findMany({
+        where: { prestamoId, deletedAt: null },
+        orderBy: { numeroCuota: 'asc' },
+      });
+      const base = cuotas
+        .slice(0, cuotasIniciales)
+        .reduce((sum: number, c: any) => sum + Number(c.montoTotal || 0), 0);
+      await this.redistribuirCuotas(tx, prestamoId, base);
+      return;
+    }
+    await this.recalcularPrestamo(tx, prestamoId);
   }
 
   /**
@@ -150,103 +165,62 @@ export class PagoService {
   }
 
   /**
-   * Reinicia las cuotas del préstamo y redistribuye los pagos vigentes en
-   * orden cronológico, preservando la base de cuotas pagadas de inicio (si el
-   * préstamo nació con cuotas pre-pagadas) y recalculando desde cero la mora
-   * de las cuotas que queden PENDIENTE.
+   * Base de cuotas pagadas de inicio (cuotas creadas PAGADA sin fila en Pago)
+   * deducida del estado ACTUAL: Σ cuotas.montoPagado − Σ aplicado por los pagos
+   * que ese estado todavía refleja (vigentes + `pagosAunReflejados`, p. ej. el
+   * pago que se acaba de borrar). Solo es confiable si las cuotas no fueron
+   * pisadas por un dispositivo después del último recálculo — por eso el push
+   * de sync la toma ANTES de aplicar los cambios del dispositivo
+   * (ver `sincronizacion.service.ts`).
    */
-  async recalcularPrestamo(tx: any, prestamoId: string, pagoEliminado?: any): Promise<void> {
-    const prestamo = await tx.prestamo.findUnique({
-      where: { id: prestamoId },
-      include: { cliente: { include: { organizacion: { select: { configuracion: true } } } } },
-    });
+  async calcularBaseInicial(tx: any, prestamoId: string, pagosAunReflejados: any[] = []): Promise<number> {
+    const cuotas = await tx.cuota.findMany({ where: { prestamoId, deletedAt: null } });
+    const pagosVigentes = await tx.pago.findMany({ where: { prestamoId, deletedAt: null } });
+    const idsVigentes = new Set(pagosVigentes.map((p: any) => p.id));
+    const reflejados = [...pagosVigentes, ...pagosAunReflejados.filter((p: any) => p && !idsVigentes.has(p.id))];
+    return baseInicialImplicita(cuotas, reflejados).base;
+  }
+
+  /**
+   * Reconstruye `montoPagado`/`estado`/`fechaPago` de TODAS las cuotas del
+   * préstamo desde cero: primero la base de cuotas pagadas de inicio y luego
+   * los pagos vigentes en orden cronológico. Fija también el estado del
+   * préstamo (LIQUIDADO cuando ya no queda ninguna cuota pendiente — antes se
+   * decidía con la fórmula monto×(1+tasa), que no coincide con las cuotas si
+   * el admin las editó). No toca la mora.
+   */
+  async redistribuirCuotas(tx: any, prestamoId: string, baseInicial: number): Promise<void> {
+    const prestamo = await tx.prestamo.findUnique({ where: { id: prestamoId } });
     if (!prestamo) return;
 
     const cuotas = await tx.cuota.findMany({
       where: { prestamoId, deletedAt: null },
       orderBy: { numeroCuota: 'asc' },
     });
-
     const pagosVigentes = await tx.pago.findMany({
       where: { prestamoId, deletedAt: null },
       orderBy: { fechaPago: 'asc' },
     });
 
-    // 1. Preservar cuotas que nacieron pagadas de inicio (creadas como PAGADA sin fila en la tabla Pago).
-    // Ojo: NO se puede recomputar esta base consultando "todos los pagos históricos" (incluidos los
-    // eliminados en eventos anteriores), porque `cuotas.montoPagado` ya excluye esos pagos desde el
-    // recálculo previo — volver a restarlos aquí los descuenta dos veces y subestima montoInicialPagado
-    // en préstamos con más de una eliminación en su historial. El único pago histórico que todavía no
-    // está reflejado como excluido en `cuotas` es el que se está eliminando en este mismo evento
-    // (`pagoEliminado`), así que se suma explícitamente en vez de volver a consultar la tabla completa.
-    const totalCuotasMontoPagadoActual = cuotas.reduce(
-      (sum: number, c: any) => sum + Number(c.montoPagado || 0),
-      0
+    // Primero la base de cuotas pagadas de inicio, luego los pagos vigentes
+    // en orden cronológico (el excedente de un sobrepago se descarta al
+    // acabarse las cuotas). Ver modules/pago/redistribucion.ts.
+    const montosPagados = distribuirEnCuotas(
+      cuotas.map((c: any) => Number(c.montoTotal)),
+      [Math.max(0, baseInicial), ...pagosVigentes.map((p: any) => Number(p.monto))]
     );
-    const totalMontoPagosVigentesMasEliminado =
-      pagosVigentes.reduce((sum: number, p: any) => sum + Number(p.monto || 0), 0) +
-      Number(pagoEliminado?.monto ?? 0);
-    const montoInicialPagado = Math.max(
-      0,
-      totalCuotasMontoPagadoActual - totalMontoPagosVigentesMasEliminado
-    );
-
-    const cuotasCalculadas = cuotas.map((c: any) => ({
+    const cuotasCalculadas = cuotas.map((c: any, idx: number) => ({
       id: c.id,
       montoTotal: Number(c.montoTotal),
-      montoPagado: 0,
+      montoPagado: montosPagados[idx],
     }));
-
-    let cuotaIndex = 0;
-
-    // Aplicar primero la base de cuotas pagadas de inicio
-    let restanteInicial = montoInicialPagado;
-    while (restanteInicial > 0 && cuotaIndex < cuotasCalculadas.length) {
-      const cuota = cuotasCalculadas[cuotaIndex];
-      const pendiente = cuota.montoTotal - cuota.montoPagado;
-      if (pendiente <= 0.05) {
-        cuotaIndex++;
-        continue;
-      }
-      let aplicar = Math.min(restanteInicial, pendiente);
-      cuota.montoPagado += aplicar;
-      restanteInicial -= aplicar;
-      if (restanteInicial > 0 && restanteInicial < 0.99) {
-        cuota.montoPagado += restanteInicial;
-        restanteInicial = 0;
-      }
-      if (cuota.montoTotal - cuota.montoPagado <= 0.05) {
-        cuotaIndex++;
-      }
-    }
-
-    // Aplicar luego los pagos vigentes cronológicamente
-    for (const pago of pagosVigentes) {
-      let restante = Number(pago.monto);
-      while (restante > 0 && cuotaIndex < cuotasCalculadas.length) {
-        const cuota = cuotasCalculadas[cuotaIndex];
-        const pendiente = cuota.montoTotal - cuota.montoPagado;
-        if (pendiente <= 0.05) {
-          cuotaIndex++;
-          continue;
-        }
-        let aplicar = Math.min(restante, pendiente);
-        cuota.montoPagado += aplicar;
-        restante -= aplicar;
-        if (restante > 0 && restante < 0.99) {
-          cuota.montoPagado += restante;
-          restante = 0;
-        }
-        if (cuota.montoTotal - cuota.montoPagado <= 0.05) {
-          cuotaIndex++;
-        }
-      }
-    }
 
     // 'PAGADA'/'LIQUIDADO': escribir el valor usado por el app móvil
     const cuotasPorId = new Map<string, any>(cuotas.map((c: any) => [c.id, c]));
+    let quedaPendiente = false;
     for (const cuota of cuotasCalculadas) {
-      const pagada = cuota.montoTotal - cuota.montoPagado <= 0.99;
+      const pagada = cuota.montoTotal - cuota.montoPagado <= TOLERANCIA_CUOTA_PAGADA;
+      if (!pagada) quedaPendiente = true;
       const original = cuotasPorId.get(cuota.id);
       // Si la cuota ya estaba PAGADA antes de este recálculo y lo sigue estando,
       // se conserva su fechaPago original en vez de pisarla con la fecha de hoy
@@ -256,19 +230,54 @@ export class PagoService {
           ? original.fechaPago
           : new Date()
         : null;
+      const estadoCuota = pagada ? 'PAGADA' : 'PENDIENTE';
+      // Solo se escribe lo que cambió: el push de sync llama esto en CADA
+      // cobro, y reescribir todas las cuotas del préstamo les subía el
+      // updatedAt y obligaba a todos los dispositivos a volver a bajarlas.
+      const sinCambios =
+        original &&
+        Math.abs(Number(original.montoPagado || 0) - cuota.montoPagado) < 0.005 &&
+        original.estado === estadoCuota &&
+        (pagada ? !!original.fechaPago : !original.fechaPago);
+      if (sinCambios) continue;
       await tx.cuota.update({
         where: { id: cuota.id },
         data: {
           montoPagado: cuota.montoPagado,
-          estado: pagada ? 'PAGADA' : 'PENDIENTE',
+          estado: estadoCuota,
           fechaPago,
         },
       });
     }
 
-    const totalLoanValue = Number(prestamo.monto) + Number(prestamo.monto) * (Number(prestamo.tasaInteres) / 100);
-    const totalPagado = montoInicialPagado + pagosVigentes.reduce((sum: number, p: any) => sum + Number(p.monto), 0);
-    const liquidado = totalLoanValue - totalPagado <= 0.05;
+    const liquidado = cuotasCalculadas.length > 0
+      ? !quedaPendiente
+      : Number(prestamo.monto) * (1 + Number(prestamo.tasaInteres) / 100) -
+          pagosVigentes.reduce((sum: number, p: any) => sum + Number(p.monto), 0) <= 0.05;
+
+    // CANCELADO es un estado terminal manual (ej. refinanciación) distinto de
+    // LIQUIDADO; el préstamo conserva su historial de pagos, así que sin esta
+    // guarda, borrar cualquiera de esos pagos lo reactivaba a ACTIVO/LIQUIDADO.
+    const estado = prestamo.estado === 'CANCELADO' ? 'CANCELADO' : (liquidado ? 'LIQUIDADO' : 'ACTIVO');
+    if (estado !== prestamo.estado) {
+      await tx.prestamo.update({ where: { id: prestamoId }, data: { estado } });
+    }
+  }
+
+  /**
+   * Reinicia las cuotas del préstamo y redistribuye los pagos vigentes en
+   * orden cronológico, preservando la base de cuotas pagadas de inicio, y
+   * restituye la mora del pago eliminado (si lo hay).
+   */
+  async recalcularPrestamo(tx: any, prestamoId: string, pagoEliminado?: any): Promise<void> {
+    const prestamo = await tx.prestamo.findUnique({ where: { id: prestamoId } });
+    if (!prestamo) return;
+
+    // El pago que se está eliminando ya tiene deletedAt, pero las cuotas
+    // todavía reflejan su aplicación: se cuenta como "aún reflejado" para que
+    // la base no lo confunda con dinero pagado de inicio.
+    const base = await this.calcularBaseInicial(tx, prestamoId, pagoEliminado ? [pagoEliminado] : []);
+    await this.redistribuirCuotas(tx, prestamoId, base);
 
     // Mora: se RESTITUYE solo la mora que había cobrado el pago eliminado,
     // sobre el valor actual (mismo criterio que `eliminarPagoLocal` en la app).
@@ -288,15 +297,9 @@ export class PagoService {
     const moraActual = Number(prestamo.moraAcumulada || 0);
     const nuevaMoraAcumulada = Math.max(0, moraActual + moraRevertida);
 
-    // CANCELADO es un estado terminal manual (ej. refinanciación) distinto de
-    // LIQUIDADO; el préstamo conserva su historial de pagos, así que sin esta
-    // guarda, borrar cualquiera de esos pagos lo reactivaba a ACTIVO/LIQUIDADO.
-    const estado = prestamo.estado === 'CANCELADO' ? 'CANCELADO' : (liquidado ? 'LIQUIDADO' : 'ACTIVO');
-
     await tx.prestamo.update({
       where: { id: prestamoId },
       data: {
-        estado,
         moraAcumulada: nuevaMoraAcumulada,
         moraFechaCalculo: new Date(),
       },

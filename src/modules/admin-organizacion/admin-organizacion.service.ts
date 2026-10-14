@@ -608,7 +608,13 @@ export class AdminOrganizacionService {
       // (incluido conservar CANCELADO), así que el volteo manual se elimina.
       const pagoService = new PagoService();
       await prisma.$transaction(async (tx: any) => {
-        await tx.pago.update({ where: { id: registroId }, data: softDelete });
+        // Borrado condicionado a `deletedAt: null` DENTRO de la transacción:
+        // el findFirst de arriba corre fuera de ella, así que dos borrados
+        // simultáneos del mismo pago (doble clic, panel + sync) pasaban ambos
+        // y recalculaban dos veces (visitados −2 y la base de cuotas
+        // iniciales descontada otra vez). El segundo ahora es un no-op.
+        const { count } = await tx.pago.updateMany({ where: { id: registroId, deletedAt: null }, data: softDelete });
+        if (count === 0) return;
 
         await tx.auditoria.create({
           data: {
@@ -1147,7 +1153,10 @@ export class AdminOrganizacionService {
 
       const pagoService = new PagoService();
       if (typeof payload.cuotasIniciales === 'number') {
-        await pagoService.recalcularPrestamoAdmin(organizacionId, prestamoId, payload.cuotasIniciales);
+        // Misma transacción (tx): antes abría una segunda transacción sobre la
+        // misma fila del préstamo, se bloqueaban entre sí hasta el timeout y
+        // se perdían las ediciones del admin.
+        await pagoService.recalcularPrestamoAdminTx(tx, prestamoId, payload.cuotasIniciales);
       } else {
         await pagoService.recalcularPrestamo(tx, prestamoId);
       }
