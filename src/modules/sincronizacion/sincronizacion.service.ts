@@ -81,6 +81,8 @@ export class SincronizacionService {
       // recibiría un number en una columna DateTime y reventaría el push
       // entero de la tabla prestamos.
       'moraFechaCalculo',
+      // Pagos: de cuándo es la posición GPS del cobro (ms en la app).
+      'ubicacionEn',
     ];
 
     for (const field of dateFields) {

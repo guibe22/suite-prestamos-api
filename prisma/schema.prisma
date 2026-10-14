@@ -610,6 +610,20 @@ model Pago {
   // se aplicó este pago, para que el recibo pueda desglosar "Completivo
   // cuota 9/13" + "Abono cuota 10/13" cuando un cobro abarca más de una.
   detalleCuotas          String?
+  // Dónde estaba el cobrador al cobrar: evidencia ante una disputa ("sí pasé
+  // por ahí"). Es la última posición que ya tenía la telemetría de la
+  // jornada (no se pide un GPS nuevo para no frenar el cobro), así que puede
+  // ser de hace unos minutos: `ubicacionEn` dice de cuándo es. NULL = cobro
+  // sin posición (fuera de jornada, GPS apagado o pagos de antes del campo).
+  latitud                Float?
+  longitud               Float?
+  /// Radio de precisión del GPS en metros.
+  precisionUbicacion     Float?
+  ubicacionEn            DateTime?
+  /// Estado de la ubicación al cobrar (OK, GPS_APAGADO, UBICACION_FALSA...;
+  /// catálogo en telemetria.types.ts). Texto y no enum: lo manda el
+  /// dispositivo por sync y un valor nuevo no debe romper el push.
+  estadoUbicacion        String?
   createdAt              DateTime         @default(now())
   updatedAt              DateTime         @updatedAt
   deletedAt              DateTime?
