@@ -87,19 +87,6 @@ for (const ruta of PAGINAS_LEGALES) {
   });
 }
 
-// Endpoint temporal para recibir logs de depuración del cliente
-app.post('/api/debug-log', (req, res) => {
-  try {
-    const fs = require('node:fs');
-    const path = require('node:path');
-    const logMsg = `[${new Date().toISOString()}] ${JSON.stringify(req.body, null, 2)}\n\n`;
-    fs.appendFileSync(path.join(process.cwd(), 'app_debug_logs.txt'), logMsg);
-  } catch (err) {
-    // ignorar fallos al escribir
-  }
-  res.sendStatus(200);
-});
-
 // Manejo de errores
 app.use(errorMiddleware);
 
