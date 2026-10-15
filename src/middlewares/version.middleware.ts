@@ -36,8 +36,24 @@ function compararVersiones(actual: string, minima: string): number {
  * (se trata como versión desconocida = desactualizada). Súbela solo después
  * de confirmar que la base de usuarios ya tiene una versión que manda el header.
  */
+/**
+ * Cabecera con que se identifica el panel web (`suite-prestamos-web`,
+ * `lib/api-sync.ts`). El panel no tiene versión de app: sin esta excepción,
+ * en cuanto se configuró `minVersionApp` TODO lo que guardaba el panel
+ * (cobros, clientes, cajas…) se rechazaba con 403 como "versión desconocida".
+ * Se puede falsificar, igual que `X-App-Version`: el gate existe para frenar
+ * APKs desactualizadas que se comportan bien, no a un atacante.
+ */
+export const CABECERA_CLIENTE = 'x-cliente';
+export const CLIENTE_PANEL_WEB = 'panel-web';
+
 export const requireMinAppVersion = () => {
   return async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
+    if (req.headers[CABECERA_CLIENTE] === CLIENTE_PANEL_WEB) {
+      next();
+      return;
+    }
+
     try {
       const { minVersionApp } = await configuracionService.obtenerPublica();
       if (!minVersionApp) {
