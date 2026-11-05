@@ -6,6 +6,21 @@ export const listarOrganizacionesQuerySchema = z.object({
   search: z.string().optional(),
   estado: z.string().optional(),
   planId: z.string().optional(),
+  acceso: z.string().optional(),
+  actividad: z.string().optional(),
+  registro: z.string().optional(),
+  ordenarPor: z.string().optional(),
+});
+
+export const enviarRecordatorioCorreoSchema = z.object({
+  organizacionIds: z
+    .array(z.string().uuid('Uno de los IDs de organización no es válido.'))
+    .min(1, 'Debes seleccionar al menos una organización.')
+    .max(100, 'Solo se permiten hasta 100 organizaciones por envío.'),
+  asunto: z.string().trim().min(3, 'El asunto es demasiado corto.').max(160, 'El asunto es demasiado largo.'),
+  mensaje: z.string().trim().min(10, 'El mensaje es demasiado corto.').max(4000, 'El mensaje es demasiado largo.'),
+  ctaTexto: z.string().trim().max(80).optional(),
+  ctaUrl: z.string().trim().url().optional(),
 });
 
 export const actualizarSuscripcionOrgSchema = z.object({

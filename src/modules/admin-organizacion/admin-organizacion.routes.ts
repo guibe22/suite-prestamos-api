@@ -5,6 +5,7 @@ import { checkRole } from '../../middlewares/permissions.middleware.js';
 import { validate } from '../../middlewares/validate.middleware.js';
 import {
   actualizarSuscripcionOrgSchema,
+  enviarRecordatorioCorreoSchema,
   idParamSchema,
   jornadaParamsSchema,
   prestamoParamsSchema,
@@ -32,6 +33,24 @@ router.use(authMiddleware, checkRole(['SUPER_ADMIN']));
  *         description: Lista paginada de organizaciones
  */
 router.get('/', validate({ query: listarOrganizacionesQuerySchema }), controller.listar);
+
+/**
+ * @swagger
+ * /admin/organizaciones/recordatorio-correo:
+ *   post:
+ *     summary: Envía recordatorios o incentivos de suscripción por correo a una o varias organizaciones — solo SUPER_ADMIN
+ *     tags: [AdminOrganizacion]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Resumen de correos enviados
+ */
+router.post(
+  '/recordatorio-correo',
+  validate({ body: enviarRecordatorioCorreoSchema }),
+  controller.enviarRecordatorioCorreo
+);
 
 /**
  * @swagger

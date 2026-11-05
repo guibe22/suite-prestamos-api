@@ -14,6 +14,15 @@ export class AdminOrganizacionController {
     }
   };
 
+  enviarRecordatorioCorreo = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const resultado = await this.service.enviarRecordatorioCorreo(req.body);
+      sendSuccess(res, resultado.mensaje, resultado);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   actualizarSuscripcion = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const suscripcion = await this.service.actualizarSuscripcion(req.params.id, req.body);

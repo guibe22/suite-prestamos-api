@@ -1,19 +1,33 @@
 import { prisma } from '../../config/database.js';
 import { ConflictError, NotFoundError } from '../../shared/errors/custom.error.js';
+import { sendEmail } from '../../shared/email/email.service.js';
 import { PagoService } from '../pago/pago.service.js';
 import { getPagination, getPaginationMeta } from '../../utils/pagination.js';
-import type { actualizarSuscripcionOrgSchema, listarOrganizacionesQuerySchema } from './admin-organizacion.schema.js';
+import type {
+  actualizarSuscripcionOrgSchema,
+  enviarRecordatorioCorreoSchema,
+  listarOrganizacionesQuerySchema,
+} from './admin-organizacion.schema.js';
 import type { z } from 'zod';
 import { Prisma, type EstadoSuscripcion } from '@prisma/client';
 
 type ActualizarSuscripcionInput = z.infer<typeof actualizarSuscripcionOrgSchema>;
 type ListarOrganizacionesQuery = Partial<z.infer<typeof listarOrganizacionesQuerySchema>>;
+type EnviarRecordatorioCorreoInput = z.infer<typeof enviarRecordatorioCorreoSchema>;
 
 /** undefined = no tocar el campo, null = limpiarlo, string = fecha nueva. */
 function normalizarFecha(valor?: string | null): Date | null | undefined {
   if (valor === undefined) return undefined;
   if (valor === null) return null;
   return new Date(valor);
+}
+
+function escaparHtmlCorreo(texto: string): string {
+  return texto
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 export class AdminOrganizacionService {
@@ -26,68 +40,219 @@ export class AdminOrganizacionService {
     const search = query.search?.trim();
     const estado = query.estado;
     const planId = query.planId;
+    const acceso = query.acceso;
+    const actividad = query.actividad;
+    const registro = query.registro;
+    const ordenarPor = query.ordenarPor;
+
+    const ahora = new Date();
+    const en5Dias = new Date(ahora.getTime() + 5 * 24 * 60 * 60 * 1000);
+    const inicioHoy = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate());
+    const hace7Dias = new Date(ahora.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const hace30Dias = new Date(ahora.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    const andConditions: Prisma.OrganizacionWhereInput[] = [];
+
+    if (search) {
+      andConditions.push({
+        OR: [
+          { nombre: { contains: search, mode: 'insensitive' } },
+          { id: { contains: search, mode: 'insensitive' } },
+          { telefono: { contains: search, mode: 'insensitive' } },
+          {
+            usuarios: {
+              some: {
+                deletedAt: null,
+                OR: [
+                  { email: { contains: search, mode: 'insensitive' } },
+                  { nombre: { contains: search, mode: 'insensitive' } },
+                ],
+              },
+            },
+          },
+        ],
+      });
+    }
+
+    if (estado && estado !== 'TODOS') {
+      if (estado === 'SIN_SUSCRIPCION') {
+        andConditions.push({ suscripcion: null });
+      } else if (estado === 'TRIAL_VIGENTE') {
+        andConditions.push({
+          suscripcion: {
+            estado: 'TRIAL',
+            OR: [{ trialTerminaEn: null }, { trialTerminaEn: { gt: ahora } }],
+          },
+        });
+      } else if (estado === 'TRIAL_VENCIDO') {
+        andConditions.push({
+          suscripcion: {
+            estado: 'TRIAL',
+            trialTerminaEn: { lte: ahora },
+          },
+        });
+      } else {
+        andConditions.push({ suscripcion: { estado: estado as EstadoSuscripcion } });
+      }
+    }
+
+    if (planId && planId !== 'TODOS') {
+      andConditions.push({ suscripcion: { planId } });
+    }
+
+    if (acceso && acceso !== 'TODOS') {
+      if (acceso === 'HABILITADO') {
+        andConditions.push({
+          OR: [
+            { suscripcion: { estado: 'ACTIVA' } },
+            {
+              suscripcion: {
+                estado: 'TRIAL',
+                OR: [{ trialTerminaEn: null }, { trialTerminaEn: { gt: ahora } }],
+              },
+            },
+          ],
+        });
+      } else if (acceso === 'BLOQUEADO') {
+        andConditions.push({
+          OR: [
+            { suscripcion: null },
+            {
+              suscripcion: {
+                estado: { in: ['SUSPENDIDA', 'CANCELADA', 'EXPIRADA', 'PENDIENTE_PAGO'] },
+              },
+            },
+            {
+              suscripcion: {
+                estado: 'TRIAL',
+                trialTerminaEn: { lte: ahora },
+              },
+            },
+          ],
+        });
+      } else if (acceso === 'POR_VENCER') {
+        andConditions.push({
+          OR: [
+            {
+              suscripcion: {
+                estado: 'TRIAL',
+                trialTerminaEn: { gt: ahora, lte: en5Dias },
+              },
+            },
+            {
+              suscripcion: {
+                estado: 'ACTIVA',
+                periodoFinEn: { gt: ahora, lte: en5Dias },
+              },
+            },
+          ],
+        });
+      }
+    }
+
+    if (actividad && actividad !== 'TODOS') {
+      if (actividad === 'CON_CLIENTES') {
+        andConditions.push({ clientes: { some: { deletedAt: null } } });
+      } else if (actividad === 'CON_PRESTAMOS') {
+        andConditions.push({
+          clientes: { some: { deletedAt: null, prestamos: { some: { deletedAt: null } } } },
+        });
+      } else if (actividad === 'SIN_ACTIVIDAD') {
+        andConditions.push({ clientes: { none: { deletedAt: null } } });
+      }
+    }
+
+    if (registro && registro !== 'TODOS') {
+      if (registro === 'HOY') {
+        andConditions.push({ createdAt: { gte: inicioHoy } });
+      } else if (registro === '7D') {
+        andConditions.push({ createdAt: { gte: hace7Dias } });
+      } else if (registro === '30D') {
+        andConditions.push({ createdAt: { gte: hace30Dias } });
+      }
+    }
 
     const where: Prisma.OrganizacionWhereInput = {
       deletedAt: null,
-      ...(search
-        ? {
-            OR: [
-              { nombre: { contains: search, mode: 'insensitive' } },
-              { id: { contains: search, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
-      ...(estado && estado !== 'TODOS'
-        ? estado === 'SIN_SUSCRIPCION'
-          ? { suscripcion: null }
-          : { suscripcion: { estado: estado as EstadoSuscripcion } }
-        : {}),
-      ...(planId && planId !== 'TODOS'
-        ? { suscripcion: { planId } }
-        : {}),
+      ...(andConditions.length > 0 ? { AND: andConditions } : {}),
     };
+
+    const orderBy: Prisma.OrganizacionOrderByWithRelationInput =
+      ordenarPor === 'ANTIGUAS'
+        ? { createdAt: 'asc' }
+        : ordenarPor === 'MAS_CLIENTES'
+          ? { clientes: { _count: 'desc' } }
+          : ordenarPor === 'VENCIMIENTO'
+            ? { suscripcion: { trialTerminaEn: 'asc' } }
+            : { createdAt: 'desc' };
 
     const [totalItems, organizaciones, stats] = await Promise.all([
       prisma.organizacion.count({ where }),
       prisma.organizacion.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy,
         skip,
         take,
         include: {
           suscripcion: { include: { plan: true } },
-          _count: { select: { usuarios: true, clientes: true } },
+          usuarios: {
+            where: { deletedAt: null },
+            orderBy: { createdAt: 'asc' },
+            take: 1,
+            select: { id: true, nombre: true, email: true },
+          },
+          _count: {
+            select: {
+              usuarios: { where: { deletedAt: null } },
+              clientes: { where: { deletedAt: null } },
+            },
+          },
         },
       }),
       this.obtenerEstadisticas(),
     ]);
 
-    const data = organizaciones.map((org) => ({
-      id: org.id,
-      nombre: org.nombre,
-      createdAt: org.createdAt,
-      usuarios: org._count.usuarios,
-      clientes: org._count.clientes,
-      suscripcion: org.suscripcion
-        ? {
-            estado: org.suscripcion.estado,
-            proveedor: org.suscripcion.proveedor,
-            trialTerminaEn: org.suscripcion.trialTerminaEn,
-            periodoFinEn: org.suscripcion.periodoFinEn,
-            canceladaEn: org.suscripcion.canceladaEn,
-            avisoDias: org.suscripcion.avisoDias,
-            diasGraciaSuspension: org.suscripcion.diasGraciaSuspension,
-            avisoEnviadoEn: org.suscripcion.avisoEnviadoEn,
-            limitesPersonalizados: org.suscripcion.limitesPersonalizados,
-            plan: {
-              id: org.suscripcion.plan.id,
-              codigo: org.suscripcion.plan.codigo,
-              nombre: org.suscripcion.plan.nombre,
-              limites: org.suscripcion.plan.limites,
-            },
-          }
-        : null,
-    }));
+    const conteosPrestamos = await Promise.all(
+      organizaciones.map((org) =>
+        prisma.prestamo.count({
+          where: { deletedAt: null, cliente: { organizacionId: org.id, deletedAt: null } },
+        })
+      )
+    );
+
+    const data = organizaciones.map((org, idx) => {
+      const titular = org.usuarios[0] ?? null;
+
+      return {
+        id: org.id,
+        nombre: org.nombre,
+        telefono: org.telefono ?? null,
+        createdAt: org.createdAt,
+        usuarios: org._count.usuarios,
+        clientes: org._count.clientes,
+        prestamos: conteosPrestamos[idx] ?? 0,
+        contacto: titular ? { nombre: titular.nombre, email: titular.email } : null,
+        suscripcion: org.suscripcion
+          ? {
+              estado: org.suscripcion.estado,
+              proveedor: org.suscripcion.proveedor,
+              trialTerminaEn: org.suscripcion.trialTerminaEn,
+              periodoFinEn: org.suscripcion.periodoFinEn,
+              canceladaEn: org.suscripcion.canceladaEn,
+              avisoDias: org.suscripcion.avisoDias,
+              diasGraciaSuspension: org.suscripcion.diasGraciaSuspension,
+              avisoEnviadoEn: org.suscripcion.avisoEnviadoEn,
+              limitesPersonalizados: org.suscripcion.limitesPersonalizados,
+              plan: {
+                id: org.suscripcion.plan.id,
+                codigo: org.suscripcion.plan.codigo,
+                nombre: org.suscripcion.plan.nombre,
+                limites: org.suscripcion.plan.limites,
+              },
+            }
+          : null,
+      };
+    });
 
     const meta = {
       ...getPaginationMeta(page, limit, totalItems),
@@ -97,21 +262,220 @@ export class AdminOrganizacionService {
     return { data, meta };
   }
 
-  /** Estadísticas globales para las tarjetas KPI de la cabecera. */
+  /**
+   * Estadísticas globales y embudo de adquisición/conversión para las tarjetas
+   * KPI de la cabecera. Separa las pruebas gratuitas vigentes de las vencidas
+   * para que `bloqueadas` coincida con el acceso real que muestra la tabla.
+   */
   private async obtenerEstadisticas() {
-    const [total, activas, trial, sinSub] = await Promise.all([
+    const ahora = new Date();
+    const en5Dias = new Date(ahora.getTime() + 5 * 24 * 60 * 60 * 1000);
+    const hace7Dias = new Date(ahora.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const hace30Dias = new Date(ahora.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    const [
+      total,
+      activas,
+      trialVigente,
+      trialVencido,
+      sinSub,
+      conActividad,
+      conPrestamos,
+      trialVencidoConUso,
+      porVencer,
+      nuevas7d,
+      nuevas30d,
+    ] = await Promise.all([
       prisma.organizacion.count({ where: { deletedAt: null } }),
-      prisma.organizacion.count({ where: { deletedAt: null, suscripcion: { estado: 'ACTIVA' } } }),
-      prisma.organizacion.count({ where: { deletedAt: null, suscripcion: { estado: 'TRIAL' } } }),
+      prisma.organizacion.count({
+        where: { deletedAt: null, suscripcion: { estado: 'ACTIVA' } },
+      }),
+      prisma.organizacion.count({
+        where: {
+          deletedAt: null,
+          suscripcion: {
+            estado: 'TRIAL',
+            OR: [{ trialTerminaEn: null }, { trialTerminaEn: { gt: ahora } }],
+          },
+        },
+      }),
+      prisma.organizacion.count({
+        where: {
+          deletedAt: null,
+          suscripcion: { estado: 'TRIAL', trialTerminaEn: { lte: ahora } },
+        },
+      }),
       prisma.organizacion.count({ where: { deletedAt: null, suscripcion: null } }),
+      prisma.organizacion.count({
+        where: { deletedAt: null, clientes: { some: { deletedAt: null } } },
+      }),
+      prisma.organizacion.count({
+        where: {
+          deletedAt: null,
+          clientes: { some: { deletedAt: null, prestamos: { some: { deletedAt: null } } } },
+        },
+      }),
+      prisma.organizacion.count({
+        where: {
+          deletedAt: null,
+          suscripcion: { estado: 'TRIAL', trialTerminaEn: { lte: ahora } },
+          clientes: { some: { deletedAt: null } },
+        },
+      }),
+      prisma.organizacion.count({
+        where: {
+          deletedAt: null,
+          OR: [
+            { suscripcion: { estado: 'TRIAL', trialTerminaEn: { gt: ahora, lte: en5Dias } } },
+            { suscripcion: { estado: 'ACTIVA', periodoFinEn: { gt: ahora, lte: en5Dias } } },
+          ],
+        },
+      }),
+      prisma.organizacion.count({
+        where: { deletedAt: null, createdAt: { gte: hace7Dias } },
+      }),
+      prisma.organizacion.count({
+        where: { deletedAt: null, createdAt: { gte: hace30Dias } },
+      }),
     ]);
+
+    const bloqueadas = Math.max(0, total - activas - trialVigente);
 
     return {
       total,
       activas,
-      trial,
-      bloqueadas: Math.max(0, total - activas - trial - sinSub),
+      trial: trialVigente,
+      trialVencido,
+      bloqueadas,
       sinSub,
+      conActividad,
+      conPrestamos,
+      trialVencidoConUso,
+      porVencer,
+      nuevas7d,
+      nuevas30d,
+    };
+  }
+
+  /**
+   * Envía correos de recordatorio, seguimiento o incentivo de pago a las
+   * organizaciones seleccionadas usando el correo de su usuario titular.
+   */
+  async enviarRecordatorioCorreo(input: EnviarRecordatorioCorreoInput) {
+    const organizaciones = await prisma.organizacion.findMany({
+      where: {
+        id: { in: input.organizacionIds },
+        deletedAt: null,
+      },
+      include: {
+        suscripcion: { include: { plan: true } },
+        usuarios: {
+          where: { deletedAt: null },
+          orderBy: { createdAt: 'asc' },
+          take: 1,
+          select: { nombre: true, email: true },
+        },
+        _count: {
+          select: {
+            clientes: { where: { deletedAt: null } },
+          },
+        },
+      },
+    });
+
+    if (organizaciones.length === 0) {
+      throw new NotFoundError('No se encontraron organizaciones válidas para el envío.');
+    }
+
+    let enviados = 0;
+    let sinCorreo = 0;
+    let fallidos = 0;
+    const destinatarios: string[] = [];
+
+    for (const org of organizaciones) {
+      const titular = org.usuarios[0];
+      const email = titular?.email?.trim();
+      if (!email) {
+        sinCorreo++;
+        continue;
+      }
+
+      const prestamosCount = await prisma.prestamo.count({
+        where: { deletedAt: null, cliente: { organizacionId: org.id, deletedAt: null } },
+      });
+
+      const vars: Record<string, string> = {
+        organizacion: org.nombre,
+        nombre: titular.nombre || org.nombre,
+        email,
+        clientes: String(org._count.clientes),
+        prestamos: String(prestamosCount),
+        plan: org.suscripcion?.plan?.nombre || 'Prueba Gratuita',
+      };
+
+      const reemplazar = (plantilla: string) =>
+        plantilla.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key) =>
+          key in vars ? vars[key] : match
+        );
+
+      const asuntoFinal = reemplazar(input.asunto);
+      const mensajeFinal = reemplazar(input.mensaje);
+
+      const parrafosHtml = mensajeFinal
+        .split(/\n{2,}/)
+        .map(
+          (bloque) =>
+            `<p style="color: #374151; font-size: 15px; line-height: 24px; margin: 0 0 16px 0;">${escaparHtmlCorreo(
+              bloque
+            ).replace(/\n/g, '<br/>')}</p>`
+        )
+        .join('');
+
+      const ctaHtml =
+        input.ctaTexto && input.ctaUrl
+          ? `
+            <div style="text-align: center; margin: 28px 0;">
+              <a href="${escaparHtmlCorreo(input.ctaUrl)}" style="display: inline-block; background-color: #059669; color: #ffffff; font-weight: 700; font-size: 14px; text-decoration: none; padding: 12px 24px; border-radius: 10px;">
+                ${escaparHtmlCorreo(input.ctaTexto)}
+              </a>
+            </div>
+          `
+          : '';
+
+      const html = `
+        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 560px; margin: 0 auto; padding: 28px; border: 1px solid #e5e7eb; border-radius: 16px; background-color: #ffffff;">
+          <div style="margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #f3f4f6;">
+            <span style="display: inline-block; background-color: #059669; color: #ffffff; font-weight: 800; font-size: 12px; padding: 4px 8px; border-radius: 6px; letter-spacing: 0.5px;">SUITE PRÉSTAMOS</span>
+          </div>
+          ${parrafosHtml}
+          ${ctaHtml}
+          <hr style="border: none; border-top: 1px solid #f3f4f6; margin: 24px 0;" />
+          <p style="color: #9ca3af; font-size: 11px; text-align: center; margin: 0;">
+            © ${new Date().getFullYear()} Suite Préstamos · Enviado a ${escaparHtmlCorreo(email)} (${escaparHtmlCorreo(org.nombre)})
+          </p>
+        </div>
+      `;
+
+      try {
+        await sendEmail({
+          to: email,
+          subject: asuntoFinal,
+          html,
+          devLogFallback: `Recordatorio para ${email} (${org.nombre}): ${asuntoFinal}`,
+        });
+        enviados++;
+        destinatarios.push(email);
+      } catch {
+        fallidos++;
+      }
+    }
+
+    return {
+      enviados,
+      sinCorreo,
+      fallidos,
+      destinatarios,
+      mensaje: `Se enviaron ${enviados} correo(s) correctamente${sinCorreo > 0 ? ` (${sinCorreo} sin correo)` : ''}${fallidos > 0 ? ` (${fallidos} fallido(s))` : ''}.`,
     };
   }
 
