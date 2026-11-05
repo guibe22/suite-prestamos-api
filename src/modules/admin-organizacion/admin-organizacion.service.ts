@@ -77,6 +77,23 @@ export class AdminOrganizacionService {
     if (estado && estado !== 'TODOS') {
       if (estado === 'SIN_SUSCRIPCION') {
         andConditions.push({ suscripcion: null });
+      } else if (estado === 'BLOQUEADA' || estado === 'BLOQUEADO') {
+        andConditions.push({
+          OR: [
+            { suscripcion: null },
+            {
+              suscripcion: {
+                estado: { in: ['SUSPENDIDA', 'CANCELADA', 'EXPIRADA', 'PENDIENTE_PAGO'] },
+              },
+            },
+            {
+              suscripcion: {
+                estado: 'TRIAL',
+                trialTerminaEn: { lte: ahora },
+              },
+            },
+          ],
+        });
       } else if (estado === 'TRIAL_VIGENTE') {
         andConditions.push({
           suscripcion: {
@@ -90,6 +107,13 @@ export class AdminOrganizacionService {
             estado: 'TRIAL',
             trialTerminaEn: { lte: ahora },
           },
+        });
+      } else if (estado === 'EXPIRADA') {
+        andConditions.push({
+          OR: [
+            { suscripcion: { estado: 'EXPIRADA' } },
+            { suscripcion: { estado: 'TRIAL', trialTerminaEn: { lte: ahora } } },
+          ],
         });
       } else {
         andConditions.push({ suscripcion: { estado: estado as EstadoSuscripcion } });
