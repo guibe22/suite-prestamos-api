@@ -15,10 +15,35 @@ export const listarOrganizacionesQuerySchema = z.object({
 export const enviarRecordatorioCorreoSchema = z.object({
   organizacionIds: z
     .array(z.string().uuid('Uno de los IDs de organización no es válido.'))
-    .min(1, 'Debes seleccionar al menos una organización.')
-    .max(100, 'Solo se permiten hasta 100 organizaciones por envío.'),
+    .max(500, 'Solo se permiten hasta 500 organizaciones por envío.')
+    .optional(),
+  segmento: z
+    .enum([
+      'TRIAL_VENCIDO_CON_USO',
+      'TRIAL_VENCIDO_TODOS',
+      'SIN_ACTIVIDAD_30D',
+      'TRIAL_CON_USO',
+      'MAS_10_CLIENTES',
+      'POR_VENCER',
+      'TODAS_FILTRADAS',
+    ])
+    .optional(),
+  filtro: z
+    .object({
+      search: z.string().optional(),
+      estado: z.string().optional(),
+      planId: z.string().optional(),
+      acceso: z.string().optional(),
+      actividad: z.string().optional(),
+      registro: z.string().optional(),
+    })
+    .optional(),
+  canales: z.enum(['AMBOS', 'CORREO', 'NOTIFICACION']).optional().default('AMBOS'),
   asunto: z.string().trim().min(3, 'El asunto es demasiado corto.').max(160, 'El asunto es demasiado largo.'),
-  mensaje: z.string().trim().min(10, 'El mensaje es demasiado corto.').max(4000, 'El mensaje es demasiado largo.'),
+  mensaje: z.string().trim().min(5, 'El mensaje es demasiado corto.').max(4000, 'El mensaje es demasiado largo.'),
+  notificacionTitulo: z.string().trim().max(120).optional(),
+  notificacionCuerpo: z.string().trim().max(300).optional(),
+  notificacionRuta: z.string().trim().max(120).optional(),
   ctaTexto: z.string().trim().max(80).optional(),
   ctaUrl: z.string().trim().url().optional(),
 });

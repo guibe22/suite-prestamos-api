@@ -1,6 +1,7 @@
 import { prisma } from '../../config/database.js';
 import { ConflictError, NotFoundError } from '../../shared/errors/custom.error.js';
-import { sendEmail } from '../../shared/email/email.service.js';
+import { sendBatchEmails } from '../../shared/email/email.service.js';
+import { NotificacionService } from '../notificacion/notificacion.service.js';
 import { PagoService } from '../pago/pago.service.js';
 import { getPagination, getPaginationMeta } from '../../utils/pagination.js';
 import type {
@@ -31,19 +32,16 @@ function escaparHtmlCorreo(texto: string): string {
 }
 
 export class AdminOrganizacionService {
-  /** Catálogo paginado y filtrado de organizaciones para el panel de PLATAFORMA. */
-  async listar(query: ListarOrganizacionesQuery = {}) {
-    const page = query.page && query.page > 0 ? Number(query.page) : 1;
-    const limit = query.limit && query.limit > 0 ? Number(query.limit) : 10;
-    const { skip, take } = getPagination({ page, limit });
+  private notificaciones = new NotificacionService();
 
+  /** Construye el filtro `where` reutilizable tanto para `listar` como para envíos en lote. */
+  private async construirWhereFiltro(query: ListarOrganizacionesQuery = {}): Promise<Prisma.OrganizacionWhereInput> {
     const search = query.search?.trim();
     const estado = query.estado;
     const planId = query.planId;
     const acceso = query.acceso;
     const actividad = query.actividad;
     const registro = query.registro;
-    const ordenarPor = query.ordenarPor;
 
     const ahora = new Date();
     const en5Dias = new Date(ahora.getTime() + 5 * 24 * 60 * 60 * 1000);
@@ -183,6 +181,28 @@ export class AdminOrganizacionService {
         });
       } else if (actividad === 'SIN_ACTIVIDAD') {
         andConditions.push({ clientes: { none: { deletedAt: null } } });
+      } else if (
+        actividad === 'RANGO_1_10' ||
+        actividad === 'RANGO_11_50' ||
+        actividad === 'MAS_10_CLIENTES' ||
+        actividad === 'MAS_50_CLIENTES'
+      ) {
+        const agrupados = await prisma.cliente.groupBy({
+          by: ['organizacionId'],
+          where: { deletedAt: null },
+          _count: { _all: true },
+        });
+        const idsRango = agrupados
+          .filter((item) => {
+            const c = item._count._all;
+            if (actividad === 'RANGO_1_10') return c >= 1 && c <= 10;
+            if (actividad === 'RANGO_11_50') return c >= 11 && c <= 50;
+            if (actividad === 'MAS_10_CLIENTES') return c > 10;
+            if (actividad === 'MAS_50_CLIENTES') return c > 50;
+            return true;
+          })
+          .map((item) => item.organizacionId);
+        andConditions.push({ id: { in: idsRango } });
       }
     }
 
@@ -196,19 +216,33 @@ export class AdminOrganizacionService {
       }
     }
 
-    const where: Prisma.OrganizacionWhereInput = {
+    return {
       deletedAt: null,
       ...(andConditions.length > 0 ? { AND: andConditions } : {}),
     };
+  }
+
+  /** Catálogo paginado y filtrado de organizaciones para el panel de PLATAFORMA. */
+  async listar(query: ListarOrganizacionesQuery = {}) {
+    const page = query.page && query.page > 0 ? Number(query.page) : 1;
+    const limit = query.limit && query.limit > 0 ? Number(query.limit) : 10;
+    const { skip, take } = getPagination({ page, limit });
+    const ordenarPor = query.ordenarPor;
+
+    const where = await this.construirWhereFiltro(query);
 
     const orderBy: Prisma.OrganizacionOrderByWithRelationInput =
       ordenarPor === 'ANTIGUAS'
         ? { createdAt: 'asc' }
         : ordenarPor === 'MAS_CLIENTES'
           ? { clientes: { _count: 'desc' } }
-          : ordenarPor === 'VENCIMIENTO'
-            ? { suscripcion: { trialTerminaEn: 'asc' } }
-            : { createdAt: 'desc' };
+          : ordenarPor === 'MENOS_CLIENTES'
+            ? { clientes: { _count: 'asc' } }
+            : ordenarPor === 'MAS_USUARIOS'
+              ? { usuarios: { _count: 'desc' } }
+              : ordenarPor === 'VENCIMIENTO'
+                ? { suscripcion: { trialTerminaEn: 'asc' } }
+                : { createdAt: 'desc' };
 
     const [totalItems, organizaciones, stats] = await Promise.all([
       prisma.organizacion.count({ where }),
@@ -293,6 +327,7 @@ export class AdminOrganizacionService {
    */
   private async obtenerEstadisticas() {
     const ahora = new Date();
+    const inicioHoy = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate());
     const en5Dias = new Date(ahora.getTime() + 5 * 24 * 60 * 60 * 1000);
     const hace7Dias = new Date(ahora.getTime() - 7 * 24 * 60 * 60 * 1000);
     const hace30Dias = new Date(ahora.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -307,8 +342,10 @@ export class AdminOrganizacionService {
       conPrestamos,
       trialVencidoConUso,
       porVencer,
+      nuevasHoy,
       nuevas7d,
       nuevas30d,
+      clientesPorOrg,
     ] = await Promise.all([
       prisma.organizacion.count({ where: { deletedAt: null } }),
       prisma.organizacion.count({
@@ -356,13 +393,35 @@ export class AdminOrganizacionService {
         },
       }),
       prisma.organizacion.count({
+        where: { deletedAt: null, createdAt: { gte: inicioHoy } },
+      }),
+      prisma.organizacion.count({
         where: { deletedAt: null, createdAt: { gte: hace7Dias } },
       }),
       prisma.organizacion.count({
         where: { deletedAt: null, createdAt: { gte: hace30Dias } },
       }),
+      prisma.cliente.groupBy({
+        by: ['organizacionId'],
+        where: { deletedAt: null, organizacion: { deletedAt: null } },
+        _count: { _all: true },
+      }),
     ]);
 
+    let clientes1a10 = 0;
+    let clientes11a50 = 0;
+    let clientesMas50 = 0;
+    let totalClientesGlobal = 0;
+
+    for (const item of clientesPorOrg) {
+      const c = item._count._all;
+      totalClientesGlobal += c;
+      if (c >= 1 && c <= 10) clientes1a10++;
+      else if (c >= 11 && c <= 50) clientes11a50++;
+      else if (c > 50) clientesMas50++;
+    }
+
+    const clientes0 = Math.max(0, total - conActividad);
     const bloqueadas = Math.max(0, total - activas - trialVigente);
 
     return {
@@ -376,28 +435,96 @@ export class AdminOrganizacionService {
       conPrestamos,
       trialVencidoConUso,
       porVencer,
+      nuevasHoy,
       nuevas7d,
       nuevas30d,
+      clientes0,
+      clientes1a10,
+      clientes11a50,
+      clientesMas50,
+      totalClientesGlobal,
     };
   }
 
   /**
-   * Envía correos de recordatorio, seguimiento o incentivo de pago a las
-   * organizaciones seleccionadas usando el correo de su usuario titular.
+   * Envía correos en lote y/o notificaciones push/in-app de recordatorio,
+   * seguimiento o incentivo de pago a las organizaciones seleccionadas, al
+   * filtro actual o a un segmento completo.
    */
   async enviarRecordatorioCorreo(input: EnviarRecordatorioCorreoInput) {
+    const ahora = new Date();
+    const en5Dias = new Date(ahora.getTime() + 5 * 24 * 60 * 60 * 1000);
+    const hace30Dias = new Date(ahora.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const canales = input.canales || 'AMBOS';
+    const enviarCorreo = canales === 'AMBOS' || canales === 'CORREO';
+    const enviarNotificacion = canales === 'AMBOS' || canales === 'NOTIFICACION';
+
+    let whereSegmento: Prisma.OrganizacionWhereInput = { deletedAt: null };
+
+    if (input.organizacionIds && input.organizacionIds.length > 0) {
+      whereSegmento = { id: { in: input.organizacionIds }, deletedAt: null };
+    } else if (input.segmento && input.segmento !== 'TODAS_FILTRADAS') {
+      if (input.segmento === 'TRIAL_VENCIDO_CON_USO') {
+        whereSegmento = {
+          deletedAt: null,
+          suscripcion: { estado: 'TRIAL', trialTerminaEn: { lte: ahora } },
+          clientes: { some: { deletedAt: null } },
+        };
+      } else if (input.segmento === 'TRIAL_VENCIDO_TODOS') {
+        whereSegmento = {
+          deletedAt: null,
+          suscripcion: { estado: 'TRIAL', trialTerminaEn: { lte: ahora } },
+        };
+      } else if (input.segmento === 'SIN_ACTIVIDAD_30D') {
+        whereSegmento = {
+          deletedAt: null,
+          createdAt: { gte: hace30Dias },
+          clientes: { none: { deletedAt: null } },
+        };
+      } else if (input.segmento === 'TRIAL_CON_USO') {
+        whereSegmento = {
+          deletedAt: null,
+          suscripcion: {
+            estado: 'TRIAL',
+            OR: [{ trialTerminaEn: null }, { trialTerminaEn: { gt: ahora } }],
+          },
+          clientes: { some: { deletedAt: null } },
+        };
+      } else if (input.segmento === 'MAS_10_CLIENTES') {
+        const agrupados = await prisma.cliente.groupBy({
+          by: ['organizacionId'],
+          where: { deletedAt: null },
+          _count: { _all: true },
+        });
+        const ids = agrupados.filter((a) => a._count._all > 10).map((a) => a.organizacionId);
+        whereSegmento = { deletedAt: null, id: { in: ids } };
+      } else if (input.segmento === 'POR_VENCER') {
+        whereSegmento = {
+          deletedAt: null,
+          OR: [
+            { suscripcion: { estado: 'TRIAL', trialTerminaEn: { gt: ahora, lte: en5Dias } } },
+            { suscripcion: { estado: 'ACTIVA', periodoFinEn: { gt: ahora, lte: en5Dias } } },
+          ],
+        };
+      }
+    } else if (input.filtro || input.segmento === 'TODAS_FILTRADAS') {
+      whereSegmento = await this.construirWhereFiltro(input.filtro || {});
+    } else {
+      throw new NotFoundError('Debes indicar al menos una organización, un filtro o un segmento de envío.');
+    }
+
     const organizaciones = await prisma.organizacion.findMany({
-      where: {
-        id: { in: input.organizacionIds },
-        deletedAt: null,
-      },
+      where: whereSegmento,
+      take: 500,
       include: {
         suscripcion: { include: { plan: true } },
         usuarios: {
-          where: { deletedAt: null },
+          where: {
+            deletedAt: null,
+            NOT: { AND: [{ invitacionToken: { not: null } }, { invitacionAceptadaEn: null }] },
+          },
           orderBy: { createdAt: 'asc' },
-          take: 1,
-          select: { nombre: true, email: true },
+          select: { id: true, nombre: true, email: true },
         },
         _count: {
           select: {
@@ -411,26 +538,36 @@ export class AdminOrganizacionService {
       throw new NotFoundError('No se encontraron organizaciones válidas para el envío.');
     }
 
-    let enviados = 0;
+    // Conteo de préstamos en una sola consulta batch (sin N+1)
+    const orgIds = organizaciones.map((o) => o.id);
+    const prestamosPorOrg = new Map<string, number>();
+    const prestamosRaw = await prisma.prestamo.findMany({
+      where: {
+        deletedAt: null,
+        cliente: { organizacionId: { in: orgIds }, deletedAt: null },
+      },
+      select: {
+        cliente: { select: { organizacionId: true } },
+      },
+    });
+    for (const p of prestamosRaw) {
+      const oid = p.cliente.organizacionId;
+      prestamosPorOrg.set(oid, (prestamosPorOrg.get(oid) || 0) + 1);
+    }
+
     let sinCorreo = 0;
-    let fallidos = 0;
-    const destinatarios: string[] = [];
+    const loteCorreos: Array<{ to: string; subject: string; html: string; devLogFallback: string }> = [];
+    const selloNotificacion = `${Date.now().toString(36)}-${organizaciones.length}`;
+    let notificacionesEnviadas = 0;
 
     for (const org of organizaciones) {
       const titular = org.usuarios[0];
-      const email = titular?.email?.trim();
-      if (!email) {
-        sinCorreo++;
-        continue;
-      }
-
-      const prestamosCount = await prisma.prestamo.count({
-        where: { deletedAt: null, cliente: { organizacionId: org.id, deletedAt: null } },
-      });
+      const email = titular?.email?.trim() || '';
+      const prestamosCount = prestamosPorOrg.get(org.id) || 0;
 
       const vars: Record<string, string> = {
         organizacion: org.nombre,
-        nombre: titular.nombre || org.nombre,
+        nombre: titular?.nombre || org.nombre,
         email,
         clientes: String(org._count.clientes),
         prestamos: String(prestamosCount),
@@ -445,61 +582,113 @@ export class AdminOrganizacionService {
       const asuntoFinal = reemplazar(input.asunto);
       const mensajeFinal = reemplazar(input.mensaje);
 
-      const parrafosHtml = mensajeFinal
-        .split(/\n{2,}/)
-        .map(
-          (bloque) =>
-            `<p style="color: #374151; font-size: 15px; line-height: 24px; margin: 0 0 16px 0;">${escaparHtmlCorreo(
-              bloque
-            ).replace(/\n/g, '<br/>')}</p>`
-        )
-        .join('');
+      // 1. Preparar correo para envío en lote (batch)
+      if (enviarCorreo) {
+        if (!email) {
+          sinCorreo++;
+        } else {
+          const parrafosHtml = mensajeFinal
+            .split(/\n{2,}/)
+            .map(
+              (bloque) =>
+                `<p style="color: #374151; font-size: 15px; line-height: 24px; margin: 0 0 16px 0;">${escaparHtmlCorreo(
+                  bloque
+                ).replace(/\n/g, '<br/>')}</p>`
+            )
+            .join('');
 
-      const ctaHtml =
-        input.ctaTexto && input.ctaUrl
-          ? `
-            <div style="text-align: center; margin: 28px 0;">
-              <a href="${escaparHtmlCorreo(input.ctaUrl)}" style="display: inline-block; background-color: #059669; color: #ffffff; font-weight: 700; font-size: 14px; text-decoration: none; padding: 12px 24px; border-radius: 10px;">
-                ${escaparHtmlCorreo(input.ctaTexto)}
-              </a>
+          const ctaHtml =
+            input.ctaTexto && input.ctaUrl
+              ? `
+                <div style="text-align: center; margin: 28px 0;">
+                  <a href="${escaparHtmlCorreo(input.ctaUrl)}" style="display: inline-block; background-color: #059669; color: #ffffff; font-weight: 700; font-size: 14px; text-decoration: none; padding: 12px 24px; border-radius: 10px;">
+                    ${escaparHtmlCorreo(input.ctaTexto)}
+                  </a>
+                </div>
+              `
+              : '';
+
+          const html = `
+            <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 560px; margin: 0 auto; padding: 28px; border: 1px solid #e5e7eb; border-radius: 16px; background-color: #ffffff;">
+              <div style="margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #f3f4f6;">
+                <span style="display: inline-block; background-color: #059669; color: #ffffff; font-weight: 800; font-size: 12px; padding: 4px 8px; border-radius: 6px; letter-spacing: 0.5px;">SUITE PRÉSTAMOS</span>
+              </div>
+              ${parrafosHtml}
+              ${ctaHtml}
+              <hr style="border: none; border-top: 1px solid #f3f4f6; margin: 24px 0;" />
+              <p style="color: #9ca3af; font-size: 11px; text-align: center; margin: 0;">
+                © ${new Date().getFullYear()} Suite Préstamos · Enviado a ${escaparHtmlCorreo(email)} (${escaparHtmlCorreo(org.nombre)})
+              </p>
             </div>
-          `
-          : '';
+          `;
 
-      const html = `
-        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 560px; margin: 0 auto; padding: 28px; border: 1px solid #e5e7eb; border-radius: 16px; background-color: #ffffff;">
-          <div style="margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #f3f4f6;">
-            <span style="display: inline-block; background-color: #059669; color: #ffffff; font-weight: 800; font-size: 12px; padding: 4px 8px; border-radius: 6px; letter-spacing: 0.5px;">SUITE PRÉSTAMOS</span>
-          </div>
-          ${parrafosHtml}
-          ${ctaHtml}
-          <hr style="border: none; border-top: 1px solid #f3f4f6; margin: 24px 0;" />
-          <p style="color: #9ca3af; font-size: 11px; text-align: center; margin: 0;">
-            © ${new Date().getFullYear()} Suite Préstamos · Enviado a ${escaparHtmlCorreo(email)} (${escaparHtmlCorreo(org.nombre)})
-          </p>
-        </div>
-      `;
+          loteCorreos.push({
+            to: email,
+            subject: asuntoFinal,
+            html,
+            devLogFallback: `Recordatorio para ${email} (${org.nombre}): ${asuntoFinal}`,
+          });
+        }
+      }
 
-      try {
-        await sendEmail({
-          to: email,
-          subject: asuntoFinal,
-          html,
-          devLogFallback: `Recordatorio para ${email} (${org.nombre}): ${asuntoFinal}`,
-        });
-        enviados++;
-        destinatarios.push(email);
-      } catch {
-        fallidos++;
+      // 2. Enviar notificación in-app y push a los usuarios de la organización
+      if (enviarNotificacion && org.usuarios.length > 0) {
+        const tituloNotifBase = input.notificacionTitulo?.trim()
+          ? reemplazar(input.notificacionTitulo.trim())
+          : asuntoFinal;
+        const tituloNotif = tituloNotifBase.slice(0, 80);
+
+        const cuerpoNotifBase = input.notificacionCuerpo?.trim()
+          ? reemplazar(input.notificacionCuerpo.trim())
+          : mensajeFinal
+              .replace(/^Hola\s+[^,\n]+,\s*/i, '')
+              .replace(/\s+/g, ' ')
+              .trim();
+        const cuerpoNotif = cuerpoNotifBase.slice(0, 200);
+        const rutaNotif = input.notificacionRuta?.trim() || '/(tabs)/ajustes/plan-facturacion';
+
+        for (const usuario of org.usuarios) {
+          try {
+            const creada = await this.notificaciones.crearYEnviar({
+              organizacionId: org.id,
+              usuarioId: usuario.id,
+              categoria: 'SUSCRIPCION',
+              titulo: tituloNotif,
+              cuerpo: cuerpoNotif,
+              data: rutaNotif ? { ruta: rutaNotif } : undefined,
+              claveIdempotencia: `campana:${selloNotificacion}:${usuario.id}`,
+            });
+            if (creada) notificacionesEnviadas++;
+          } catch {
+            // Un error individual de push no detiene el lote
+          }
+        }
       }
     }
 
+    // Ejecutar envío de correos en lote (Resend Batch API)
+    const resultadoCorreo = enviarCorreo
+      ? await sendBatchEmails(loteCorreos)
+      : { enviados: 0, fallidos: 0, destinatarios: [] };
+
+    const partesMensaje: string[] = [];
+    if (enviarCorreo) {
+      partesMensaje.push(`${resultadoCorreo.enviados} correo(s) en lote`);
+    }
+    if (enviarNotificacion) {
+      partesMensaje.push(`${notificacionesEnviadas} notificación(es) push/app`);
+    }
+
     return {
-      enviados,
+      totalOrganizaciones: organizaciones.length,
+      enviados: resultadoCorreo.enviados,
+      notificacionesEnviadas,
       sinCorreo,
-      fallidos,
-      destinatarios,
-      mensaje: `Se enviaron ${enviados} correo(s) correctamente${sinCorreo > 0 ? ` (${sinCorreo} sin correo)` : ''}${fallidos > 0 ? ` (${fallidos} fallido(s))` : ''}.`,
+      fallidos: resultadoCorreo.fallidos,
+      destinatarios: resultadoCorreo.destinatarios,
+      mensaje: `Envío completado para ${organizaciones.length} empresa(s): ${partesMensaje.join(' y ')}${
+        sinCorreo > 0 ? ` (${sinCorreo} sin correo)` : ''
+      }${resultadoCorreo.fallidos > 0 ? ` (${resultadoCorreo.fallidos} correo(s) fallido(s))` : ''}.`,
     };
   }
 
