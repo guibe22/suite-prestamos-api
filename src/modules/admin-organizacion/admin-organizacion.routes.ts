@@ -180,6 +180,46 @@ router.post(
 
 /**
  * @swagger
+ * /admin/organizaciones/{id}/prestamos-eliminados:
+ *   get:
+ *     summary: Préstamos cancelados desde la app — solo SUPER_ADMIN
+ *     tags: [AdminOrganizacion]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Lista de préstamos cancelados (máx. 100, más recientes primero)
+ */
+router.get(
+  '/:id/prestamos-eliminados',
+  validate({ params: idParamSchema, query: clientesEliminadosQuerySchema }),
+  controller.listarPrestamosEliminados
+);
+
+/**
+ * @swagger
+ * /admin/organizaciones/{id}/prestamos/{prestamoId}/restaurar:
+ *   post:
+ *     summary: Restaura un préstamo cancelado (vuelve a ACTIVO o LIQUIDADO) — solo SUPER_ADMIN
+ *     tags: [AdminOrganizacion]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Préstamo restaurado
+ *       404:
+ *         description: El préstamo no existe en esta organización
+ *       409:
+ *         description: El préstamo no está cancelado o su cliente está eliminado
+ */
+router.post(
+  '/:id/prestamos/:prestamoId/restaurar',
+  validate({ params: prestamoParamsSchema }),
+  controller.restaurarPrestamo
+);
+
+/**
+ * @swagger
  * /admin/organizaciones/{id}/prestamos/{prestamoId}/incluir-en-jornada:
  *   patch:
  *     summary: Marca un préstamo excluido para que se incluya en el cuadre de su jornada — solo SUPER_ADMIN

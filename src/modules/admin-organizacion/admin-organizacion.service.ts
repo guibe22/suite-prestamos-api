@@ -1074,6 +1074,9 @@ export class AdminOrganizacionService {
       // jornada" al crear el préstamo. NULL se trata como incluido (préstamos
       // creados antes de que existiera ese campo).
       const excluido = p.incluirEnJornada === false;
+      // Un préstamo CANCELADO (eliminado desde la app) no salió de la caja:
+      // se lista pero no suma al cuadre (mismo criterio que la app móvil).
+      const cancelado = p.estado === 'CANCELADO';
       return {
         id: p.id,
         createdAt: new Date(p.createdAt).toISOString(),
@@ -1085,6 +1088,7 @@ export class AdminOrganizacionService {
         tasaInteres: Number(p.tasaInteres || 0),
         plazo: p.plazo || 1,
         excluido,
+        cancelado,
       };
     });
 
@@ -1098,7 +1102,7 @@ export class AdminOrganizacionService {
     // el campo viene en 0 — mismo criterio que la app móvil.
     // Solo los incluidos aportan al cuadre (mismo criterio que la app móvil).
     const totalPrestamosListados = prestamosDetalle
-      .filter((p) => !p.excluido)
+      .filter((p) => !p.excluido && !p.cancelado)
       .reduce((s, p) => s + p.efectivoEntregado, 0);
     const prestamosCampo = Number(jornada.prestamos || 0);
     const totalPrestamos = prestamosCampo > 0 ? prestamosCampo : totalPrestamosListados;
@@ -1491,6 +1495,129 @@ export class AdminOrganizacionService {
       clienteId,
       codigo: cliente.codigo,
       mensaje: `Cliente ${nombre} (${cliente.codigo}) restaurado. Aparecerá en los teléfonos en su próxima sincronización.`,
+    };
+  }
+
+  /**
+   * Préstamos que la app marcó CANCELADO ("Cancelar préstamo"), los más
+   * recientes primero, para restaurar uno anulado por error. Los borrados con
+   * soft-delete desde este panel no entran: ese borrado también se lleva los
+   * pagos y recalcula jornadas, y deshacerlo es otra operación.
+   */
+  async listarPrestamosEliminados(organizacionId: string, search?: string) {
+    const org = await prisma.organizacion.findUnique({ where: { id: organizacionId } });
+    if (!org) throw new NotFoundError('La organización no existe.');
+
+    const termino = search?.trim();
+    const prestamos = await prisma.prestamo.findMany({
+      where: {
+        cliente: { organizacionId },
+        estado: 'CANCELADO',
+        deletedAt: null,
+        ...(termino
+          ? {
+              OR: [
+                { codigo: { contains: termino, mode: 'insensitive' } },
+                { cliente: { nombres: { contains: termino, mode: 'insensitive' } } },
+                { cliente: { apellidos: { contains: termino, mode: 'insensitive' } } },
+                { cliente: { codigo: { contains: termino, mode: 'insensitive' } } },
+                { cliente: { identificacion: { contains: termino, mode: 'insensitive' } } },
+              ],
+            }
+          : {}),
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 100,
+      select: {
+        id: true,
+        codigo: true,
+        monto: true,
+        estado: true,
+        createdAt: true,
+        updatedAt: true,
+        cliente: {
+          select: {
+            codigo: true,
+            nombres: true,
+            apellidos: true,
+            deletedAt: true,
+            ruta: { select: { nombre: true } },
+          },
+        },
+        cuotas: { where: { deletedAt: null }, select: { montoTotal: true, montoPagado: true } },
+        _count: { select: { pagos: { where: { deletedAt: null } } } },
+      },
+    });
+
+    return prestamos.map((p) => ({
+      id: p.id,
+      codigo: p.codigo || p.id,
+      monto: Number(p.monto),
+      clienteNombre: `${p.cliente.nombres} ${p.cliente.apellidos ?? ''}`.trim(),
+      clienteCodigo: p.cliente.codigo,
+      clienteEliminado: !!p.cliente.deletedAt,
+      rutaNombre: p.cliente.ruta?.nombre ?? null,
+      creadoEl: p.createdAt,
+      // La app no guarda cuándo ni quién canceló: el último updatedAt es la
+      // mejor aproximación (cancelar es lo último que se le hace al préstamo).
+      canceladoEl: p.updatedAt,
+      pagos: p._count.pagos,
+      saldoPendiente: p.cuotas.reduce((s, c) => s + Math.max(0, Number(c.montoTotal) - Number(c.montoPagado)), 0),
+    }));
+  }
+
+  /**
+   * Restaura un préstamo CANCELADO desde la app: vuelve a ACTIVO, o a
+   * LIQUIDADO si sus cuotas ya están pagadas. Cuotas y pagos nunca se tocaron
+   * al cancelar, así que no hay nada más que deshacer. Sube `updatedAt` para que el próximo pull se lo mande a los
+   * dispositivos, donde vuelve a la jornada de cobro y al cuadre.
+   */
+  async restaurarPrestamo(organizacionId: string, prestamoId: string, adminUserId: string) {
+    const prestamo = await prisma.prestamo.findFirst({
+      where: { id: prestamoId, cliente: { organizacionId }, deletedAt: null },
+      include: { cliente: { select: { nombres: true, apellidos: true, deletedAt: true } } },
+    });
+    if (!prestamo) throw new NotFoundError('El préstamo no existe en esta organización.');
+    if (prestamo.estado !== 'CANCELADO') {
+      throw new ConflictError('Este préstamo no está cancelado.');
+    }
+    // Un préstamo de un cliente borrado seguiría invisible en la app.
+    if (prestamo.cliente.deletedAt) {
+      throw new ConflictError('El cliente de este préstamo está eliminado. Restaura primero al cliente.');
+    }
+
+    const estado = await prisma.$transaction(async (tx: any) => {
+      const cuotas = await tx.cuota.findMany({
+        where: { prestamoId, deletedAt: null },
+        select: { montoTotal: true, montoPagado: true },
+      });
+      const debe = cuotas.some((c: any) => Number(c.montoTotal) - Number(c.montoPagado) > 0.05);
+      const nuevoEstado = cuotas.length > 0 && !debe ? 'LIQUIDADO' : 'ACTIVO';
+
+      await tx.prestamo.update({
+        where: { id: prestamoId },
+        data: { estado: nuevoEstado, updatedAt: new Date() },
+      });
+      await tx.auditoria.create({
+        data: {
+          usuarioId: adminUserId,
+          accion: 'RESTORE',
+          tabla: 'prestamos',
+          registroId: prestamoId,
+          valoresAnteriores: { estado: prestamo.estado },
+          valoresNuevos: { estado: nuevoEstado },
+        },
+      });
+      return nuevoEstado;
+    });
+
+    const codigo = prestamo.codigo || prestamo.id;
+    const nombre = `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos ?? ''}`.trim();
+    return {
+      prestamoId,
+      codigo,
+      estado,
+      mensaje: `Préstamo ${codigo} de ${nombre} restaurado como ${estado}. Aparecerá en los teléfonos en su próxima sincronización.`,
     };
   }
 

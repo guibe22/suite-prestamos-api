@@ -113,6 +113,25 @@ export class AdminOrganizacionController {
     }
   };
 
+  listarPrestamosEliminados = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+      const prestamos = await this.service.listarPrestamosEliminados(req.params.id, search);
+      sendSuccess(res, 'Préstamos eliminados recuperados con éxito.', prestamos);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  restaurarPrestamo = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const resultado = await this.service.restaurarPrestamo(req.params.id, req.params.prestamoId, req.user!.id);
+      sendSuccess(res, resultado.mensaje, resultado);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   listarRutas = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const rutas = await this.service.listarRutas(req.params.id);
