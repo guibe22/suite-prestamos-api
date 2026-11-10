@@ -834,7 +834,9 @@ export class AdminOrganizacionService {
         prisma.prestamo.findMany({
           where,
           include: {
-            cliente: { select: { nombres: true, apellidos: true, codigo: true } },
+            cliente: {
+              select: { nombres: true, apellidos: true, codigo: true, deletedAt: true, ruta: { select: { nombre: true } } },
+            },
           },
           orderBy: { createdAt: 'desc' },
           skip,
@@ -846,6 +848,10 @@ export class AdminOrganizacionService {
         id: p.id,
         codigo: p.codigo || p.id,
         clienteNombre: p.cliente ? `${p.cliente.nombres} ${p.cliente.apellidos || ''}`.trim() : 'Desconocido',
+        // Para el botón "Reactivar" de los CANCELADO: restaurarPrestamo exige
+        // que el cliente no esté borrado, y la ruta va en la confirmación.
+        clienteEliminado: !!p.cliente?.deletedAt,
+        rutaNombre: p.cliente?.ruta?.nombre ?? null,
         monto: Number(p.monto || 0),
         tasaInteres: Number(p.tasaInteres || 0),
         plazo: p.plazo || 1,
