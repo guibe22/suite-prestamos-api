@@ -12,8 +12,11 @@ import { adminOrganizacionRoutes } from '../modules/admin-organizacion/index.js'
 import { notificacionRoutes } from '../modules/notificacion/index.js';
 import { adminNotificacionRoutes } from '../modules/admin-notificacion/index.js';
 import { telemetriaRoutes } from '../modules/telemetria/index.js';
+import { clienteFotoRoutes } from '../modules/cliente-foto/index.js';
 
-// Nota: cliente, prestamo, caja, cuota, documento, referencia, auditoria,
+// Nota: la única excepción REST de cliente es la foto de la cédula
+// (/cliente/:id/foto-cedula), que a propósito NO viaja por sync.
+// Fuera de eso: cliente, prestamo, caja, cuota, documento, referencia, auditoria,
 // movimiento-caja, rol, cuenta y organizacion NO tienen módulo REST
 // — todas sus mutaciones ocurren vía POST /sincronizacion/push (WatermelonDB
 // sync). Existieron como placeholders vacíos (sin un solo handler) y se
@@ -32,6 +35,7 @@ router.use('/sincronizacion', sincronizacionRoutes);
 router.use('/suscripcion', suscripcionRoutes);
 router.use('/notificacion', notificacionRoutes);
 router.use('/telemetria', telemetriaRoutes);
+router.use('/cliente', clienteFotoRoutes);
 router.use('/admin/planes', adminPlanRoutes);
 router.use('/admin/organizaciones', adminOrganizacionRoutes);
 router.use('/admin/notificaciones', adminNotificacionRoutes);

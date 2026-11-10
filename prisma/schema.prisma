@@ -27,6 +27,11 @@ model Organizacion {
   direccion                String?
   telefono                 String?
   configuracion            Json? // Configuración del wizard (moneda, finanzas, rutas, etc.)
+  /// Permite guardar la foto (frente) de la cédula de los clientes. Solo la
+  /// cambia el SUPER_ADMIN desde el panel de plataforma: NO vive en
+  /// `configuracion` porque esa la edita el ADMIN de la empresa, y el push de
+  /// sync la ignora (no está en camposEditables de organizaciones).
+  permiteFotoCedula        Boolean   @default(false)
   createdAt                DateTime  @default(now())
   updatedAt                DateTime  @updatedAt
   deletedAt                DateTime?
@@ -42,6 +47,26 @@ model Organizacion {
   notificaciones Notificacion[]
 
   eventosUbicacion EventoUbicacion[]
+  fotosCedula      FotoCedulaCliente[]
+}
+
+/// Foto del frente de la cédula de un cliente (JPEG comprimido en el
+/// dispositivo, ~50-90 KB). Tabla aparte de Cliente a propósito: el pull de
+/// sync manda TODAS las columnas de Cliente a cada teléfono, y la imagen solo
+/// se descarga cuando alguien toca "Ver cédula" (GET /cliente/:id/foto-cedula).
+model FotoCedulaCliente {
+  clienteId      String       @id
+  cliente        Cliente      @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  organizacionId String
+  organizacion   Organizacion @relation(fields: [organizacionId], references: [id], onDelete: Cascade)
+  imagenBase64   String       @db.Text
+  mimeType       String       @default("image/jpeg")
+  bytes          Int
+  subidaPor      String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizacionId])
 }
 
 /// Catálogo de planes de suscripción. Editable vía seed/admin sin tocar
@@ -414,6 +439,8 @@ model Cliente {
   referencias        ReferenciaCliente[]
   avales             Aval[]
   documentos         DocumentoCliente[]
+  // NO viaja por sync (ver FotoCedulaCliente).
+  fotoCedula         FotoCedulaCliente?
 
   @@unique([organizacionId, codigo])
   @@unique([organizacionId, identificacion])

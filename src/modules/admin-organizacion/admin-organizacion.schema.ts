@@ -70,6 +70,11 @@ export const actualizarSuscripcionOrgSchema = z.object({
     .optional(),
 });
 
+/** Funciones que solo la plataforma (SUPER_ADMIN) habilita por organización. */
+export const actualizarFuncionesOrgSchema = z.object({
+  permiteFotoCedula: z.boolean(),
+});
+
 export const idParamSchema = z.object({
   id: z.string().uuid('El id no es válido.'),
 });

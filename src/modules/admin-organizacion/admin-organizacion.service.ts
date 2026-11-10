@@ -5,6 +5,7 @@ import { NotificacionService } from '../notificacion/notificacion.service.js';
 import { PagoService } from '../pago/pago.service.js';
 import { getPagination, getPaginationMeta } from '../../utils/pagination.js';
 import type {
+  actualizarFuncionesOrgSchema,
   actualizarSuscripcionOrgSchema,
   enviarRecordatorioCorreoSchema,
   listarOrganizacionesQuerySchema,
@@ -13,6 +14,7 @@ import type { z } from 'zod';
 import { Prisma, type EstadoSuscripcion } from '@prisma/client';
 
 type ActualizarSuscripcionInput = z.infer<typeof actualizarSuscripcionOrgSchema>;
+type ActualizarFuncionesOrgInput = z.infer<typeof actualizarFuncionesOrgSchema>;
 type ListarOrganizacionesQuery = Partial<z.infer<typeof listarOrganizacionesQuerySchema>>;
 type EnviarRecordatorioCorreoInput = z.infer<typeof enviarRecordatorioCorreoSchema>;
 
@@ -290,6 +292,7 @@ export class AdminOrganizacionService {
         clientes: org._count.clientes,
         prestamos: conteosPrestamos[idx] ?? 0,
         contacto: titular ? { nombre: titular.nombre, email: titular.email } : null,
+        permiteFotoCedula: org.permiteFotoCedula,
         suscripcion: org.suscripcion
           ? {
               estado: org.suscripcion.estado,
@@ -729,6 +732,41 @@ export class AdminOrganizacionService {
       create: { organizacionId, ...campos },
       include: { plan: true },
     });
+  }
+
+  /**
+   * Funciones que solo la plataforma enciende o apaga por organización. Toca
+   * `updatedAt`, así que el próximo pull de sync baja el cambio a los teléfonos.
+   * Apagar la foto de la cédula NO borra las fotos ya guardadas: solo deja de
+   * permitir verlas y subir nuevas (la empresa sí puede seguir borrándolas).
+   */
+  async actualizarFunciones(organizacionId: string, data: ActualizarFuncionesOrgInput, actorId?: string) {
+    const organizacion = await prisma.organizacion.findUnique({
+      where: { id: organizacionId },
+      select: { id: true, permiteFotoCedula: true },
+    });
+    if (!organizacion) {
+      throw new NotFoundError('La organización no existe.');
+    }
+
+    const [actualizada] = await prisma.$transaction([
+      prisma.organizacion.update({
+        where: { id: organizacionId },
+        data: { permiteFotoCedula: data.permiteFotoCedula },
+        select: { id: true, permiteFotoCedula: true },
+      }),
+      prisma.auditoria.create({
+        data: {
+          usuarioId: actorId ?? null,
+          accion: 'UPDATE',
+          tabla: 'organizacion_funciones',
+          registroId: organizacionId,
+          valoresAnteriores: { permiteFotoCedula: organizacion.permiteFotoCedula },
+          valoresNuevos: { permiteFotoCedula: data.permiteFotoCedula },
+        },
+      }),
+    ]);
+    return actualizada;
   }
 
   /** Bitácora de auditoría de una organización. */

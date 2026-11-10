@@ -32,6 +32,15 @@ export class AdminOrganizacionController {
     }
   };
 
+  actualizarFunciones = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const resultado = await this.service.actualizarFunciones(req.params.id, req.body, req.user?.id);
+      sendSuccess(res, 'Funciones de la organización actualizadas.', resultado);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   listarAuditoria = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const registros = await this.service.listarAuditoria(req.params.id);

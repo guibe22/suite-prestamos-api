@@ -4,6 +4,7 @@ import { authMiddleware } from '../../middlewares/auth.middleware.js';
 import { checkRole } from '../../middlewares/permissions.middleware.js';
 import { validate } from '../../middlewares/validate.middleware.js';
 import {
+  actualizarFuncionesOrgSchema,
   actualizarSuscripcionOrgSchema,
   enviarRecordatorioCorreoSchema,
   idParamSchema,
@@ -74,6 +75,24 @@ router.patch(
   '/:id/suscripcion',
   validate({ params: idParamSchema, body: actualizarSuscripcionOrgSchema }),
   controller.actualizarSuscripcion
+);
+
+/**
+ * @swagger
+ * /admin/organizaciones/{id}/funciones:
+ *   patch:
+ *     summary: Habilita o deshabilita funciones de la organización (ej. foto de la cédula) — solo SUPER_ADMIN
+ *     tags: [AdminOrganizacion]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: "{ id, permiteFotoCedula }"
+ */
+router.patch(
+  '/:id/funciones',
+  validate({ params: idParamSchema, body: actualizarFuncionesOrgSchema }),
+  controller.actualizarFunciones
 );
 
 /**

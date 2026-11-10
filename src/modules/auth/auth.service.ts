@@ -525,6 +525,8 @@ export class AuthService {
             direccion: user.organizacion.direccion,
             telefono: user.organizacion.telefono,
             configuracion: user.organizacion.configuracion,
+            // Solo lectura para la empresa: lo cambia el SUPER_ADMIN.
+            permiteFotoCedula: user.organizacion.permiteFotoCedula,
           }
         : null,
     };
